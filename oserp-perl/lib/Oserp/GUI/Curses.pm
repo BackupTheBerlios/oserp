@@ -9,10 +9,11 @@ use strict;
 use Carp;
 use Curses;
 use Curses::Widgets qw(:all);
+use Mail::Box::Search::Grep;
 use POSIX qw(:termios_h);
 use vars qw($VERSION);
 
-$VERSION = sprintf "%d.%03d", q$Revision: 1.9 $ =~ /(\d+)/g;
+$VERSION = sprintf "%d.%03d", q$Revision: 1.10 $ =~ /(\d+)/g;
 
 sub redraw_env
 {
@@ -476,31 +477,20 @@ sub list
 					$tag = 1;
 					$searchstring =~ s///g;
 				}
+				my $found;
+				$searchstring = $cursearch unless $searchstring;
 				if ($searchstring)
 				{	# get new search list
-					@searchlist = $self->list_search($searchstring);
+					my $next_curline = $self->list_search($searchstring,$curline,$tag);
+					$found++ if ($next_curline != $curline);
+					$curline = $next_curline;
 					$cursearch = $searchstring;
 				}
+				$curline = $self->draw_list($curline);
 				if ($tag)
-				{	# tag the list
-					$self->flag_msgs(@searchlist);
-				} else {	# jump to the next message
-					my $found;
-					SEARCHSEARCH: for (my $i=0; $i<@searchlist; $i++)
-					{
-						if ($searchlist[$i] > $curline)
-						{
-							$curline = $searchlist[$i];
-							$found++;
-							last SEARCHSEARCH;
-						}
-					}
-					if (@searchlist && (!$found))
-					{
-						$curline = $searchlist[0];
-						$found++;
-					}
-					$curline = $self->draw_list($curline);
+				{
+					$self->statusmsg("[Messages flagged]");
+				} else {
 					$self->statusmsg("[Word found]") if $found;
 					$self->statusmsg("[No match found]") unless $found;
 				}
@@ -524,10 +514,66 @@ sub list
 sub list_search
 {
 	ref(my $self = shift) or croak "instance variable needed";
-	my $searchstring = shift;
+	my ($searchstring,$curline,$tag) = @_;
+
+	my %tag = ();
+	if ($tag)
+	{
+		# TODO figure out how flags work
+#		$tag{label} = 'selected'; # to flag messages that matched
+		$tag{label} = 'flagged'; # to flag messages that matched
+#		$tag{logical} = 'OR'; # when labeling, what to do.
+			                  # see Mail::Box::Search
+	}
 
 	my $folder = $self->{_current_folder};
-
+	my $filter;
+	if ($folder->type =~ /imap/i)
+	{	# search using imap
+		# TODO: NOT IMPLEMENTED IN Mail::Box YET!!!
+		if (0) {
+		$filter = Mail::Box::Search::IMAP->new(
+			decode	=> 0, # true by defualt, but shouldn't matter, cause
+			              # we're only looking at headers
+			deleted	=> 1, # look at all messages
+			field	=> qr/(Subject|From|To|Cc|Date)/i,
+			in	=> 'HEAD',# only look in the headers
+			multiparts	=> '0',
+			match	=> $searchstring,
+			%tag
+			);
+		}
+	} else {
+		# search using grep
+		$filter = Mail::Box::Search::Grep->new(
+			decode	=> 0, # true by defualt, but shouldn't matter, cause
+			              # we're only looking at headers
+			deleted	=> 1, # look at all messages
+			field	=> qr/(Subject|From|To|Cc|Date)/i,
+			in	=> 'HEAD',# only look in the headers
+			multiparts	=> '0',
+			match	=> $searchstring,
+			%tag
+			);
+	}
+	my $next_match = $curline;
+	if ($filter && $tag)
+	{
+		$filter->search($folder);
+	} else {
+		my $last_msg = (scalar $folder->messages) - 1;
+		$curline = $last_msg if ($curline > $last_msg);
+		SEARCH: for (my $i=($curline +1); $i!=$curline; $i++)
+		{
+			$i = 0 if ($i > $last_msg); # loop
+			if ($filter->search($folder->message($i)) )
+			{
+				$next_match = $i;
+				last SEARCH;
+			}
+		}
+	}
+	return $next_match;
 }
 sub draw_list
 {
@@ -567,16 +613,39 @@ sub draw_list
 	my $b = subwin($msgs_per_page, $maxx, 0, 0);
 	for (my $i = 0; $i < $msgs_per_page; $i++)
 	{
-		my $marker = ($curline == ($i+$beginline)) ? "->" : "  ";
 		my $message;
 		unless ($message = $folder->message($i+$beginline))
 		{
 			addstr($b,$i,0,(" " x $maxx));
 			next;
 		}
+		# TODO: need to get my to_addr from ENV or config
+		my $labels = $message->labels();
+		my $myaddr = $ENV{USER}."\@domain.com";
+		my $flag;
+		if ($message->to() =~ /$myaddr/i)
+		{
+			$flag = '+';
+		} elsif ($labels->{'draft'}) {
+			# used for important flag
+			$flag = '*';
+		} elsif ($labels->{'flagged'}) {
+			$flag = 'X';
+		} else {
+			$flag = ($curline == ($i+$beginline)) ? '-' : ' ';
+		}
+		my $marker = ($curline == ($i+$beginline)) ? $flag.'>' : $flag.' ';
 		addstr($b,$i,0,$marker);
 		my $status;
-		addstr($b,sprintf('%-*s',3,$status));
+		if ($message->deleted)
+		{
+			$status = 'D';
+		} elsif ($labels->{'replied'}) {
+			$status = 'A';
+		} elsif (! $labels->{'seen'}) {
+			$status = 'N';
+		}
+		addstr($b,sprintf('%-*s',2,$status));
 		# msg number
 		addstr($b,sprintf('%*s',(length($num_of_msgs)),$i + $beginline)." ");
 		my $date = $message->date;
@@ -1135,7 +1204,7 @@ sub prompt
 		return "";
 	} elsif (length($extra_escape_char) && ($rv =~ /[$extra_escape_char]/)) {
 		delwin($b);
-		return $rv;
+		return $str.$rv;
 	} elsif ($str =~ /$regex/) {
 		delwin($b);
 		return $str;
