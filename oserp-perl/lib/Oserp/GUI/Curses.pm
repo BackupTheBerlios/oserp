@@ -9,12 +9,10 @@ use strict;
 use Carp;
 use Curses;
 use Curses::Widgets qw(:all);
+use POSIX qw(:termios_h);
 use vars qw($VERSION);
 
-$VERSION = sprintf "%d.%03d", q$Revision: 1.1 $ =~ /(\d+)/g;
-
-# handle redrawing the window when size changes:
-$SIG{WINCH} = \&redraw_evn;
+$VERSION = sprintf "%d.%03d", q$Revision: 1.2 $ =~ /(\d+)/g;
 
 sub redraw_env
 {
@@ -40,11 +38,29 @@ sub new
 	my $self = {};
 	bless($self, $class);
 
+	# handle redrawing the window when size changes:
+	$SIG{WINCH} = \&redraw_env;
+	# ignore CTRL-C so we can CTRL-C on a message, to cancel sending and shit
+	my $termio = POSIX::Termios->new;
+	$termio->getattr(fileno(STDIN));
+	my $intrid = $termio->getcc(VINTR);
+	$self->{_saved_term} = $intrid;
+	$termio->setcc(VINTR, '');
+	$termio->setattr(1,TCSANOW);
+
 	my $curs = new Curses;
 	$self->{curs} = $curs;
 
+	# TODO this should come from the config
+	$self->{_check_mail_delay} = 10;
+
 	initscr(); cbreak(); noecho();
-	halfdelay(5); # set timeout, so widgets can call functions periodically
+	leaveok(1); # ok to leave cursor whereever, and not draw it
+	raw(); # don't allow term to interpret CTRL-C and other escape chars
+	# halfdelay is how long we'll wait in tenths of seconds for a
+	# character to be entered before we loop out, and do things
+	# like check for e-mail and stuff
+	halfdelay(10); # set timeout, so widgets can call functions periodically
 	eval { keypad(1) };
 
 	return $self;
@@ -58,6 +74,19 @@ sub clear_win
 
 sub quit
 {	# cleanup anything we have laying around
+	# TODO need to somehow restore VINTR, cause this isn't working
+	ref(my $self = shift);
+	my $termio = POSIX::Termios->new;
+	$termio->getattr(fileno(STDIN));
+	if ( (ref($self)) && $self->{_saved_term} )
+	{	# restore the SIGINT
+		$termio->setcc(VINTR, ord( $self->{_saved_term} ) );
+	} else {	# restore SIGINT to CTRL-C
+		$termio->setcc(VINTR, ord( '' ) );
+	}
+	$termio->setattr(1,TCSANOW);
+	clear();
+	refresh();
 	endwin();
 }
 
@@ -81,6 +110,7 @@ sub _draw_menu
 	}
 	foreach my $y (0,1)
 	{
+		my $printed_length;
 		for (my $i = 0; $i < $big_length; $i++)
 		{
 			my @cd = ('',''); # cell data
@@ -97,7 +127,9 @@ sub _draw_menu
 			}
 			standend($b) if $cd[0];
 			addstr($b, sprintf('%-*s',$col_lengths[$i],$cd[1]) );
+			$printed_length += $col_lengths[$i] + 1;
 		}
+		addstr($b, (" " x ($maxx - $printed_length)));
 	}
 	refresh($b);
 }
@@ -180,13 +212,14 @@ sub list
 	my $menu = $_[0] ? $_[0] : 0;
 	my $max_menu = 1;
 	$self->{_current_folder} = $folder;
+	$self->{_last_mail_check} = time();
 
 	$self->list_menu($menu);
 
 	refresh();
 
 	my $last_msg = (scalar $folder->messages) - 1;
-	my $curline = $self->draw_list($last_msg);
+	my $curline = $self->draw_list($last_msg,1);
 
 	while (my $ch = getch())
 	{
@@ -208,11 +241,21 @@ sub list
 			$menu = ($menu >= $max_menu) ? 0 : ($menu + 1);
 			$self->list_menu($menu);
 		} elsif (lc($ch) eq 'j') {
+			my $rv = $self->prompt("Message number to jump to : ",qr/^\d+$/);
+			$curline = $rv if defined $rv;
+			$curline = $self->draw_list($curline);
 		} elsif ( ($ch eq '<') || ($ch eq ',') ) {
 			return 'back';
 		} elsif ( ($ch eq "\n") || (lc($ch) eq 'v') || ($ch eq '.') ) {
 			my $nextline = $self->view($curline);
+			return 'compose' if ($nextline eq 'compose');
 			$curline = $self->draw_list($nextline);
+		} elsif (lc($ch) eq 'c') {
+			return 'compose';
+		} elsif ( (time() - $self->{_last_mail_check}) > $self->{_check_mail_delay}) {
+			# TODO need a way to check for new messages.
+			# I don't know how to do it with Mail::Box
+			# return "checkmail";
 		}
 		refresh();
 	}
@@ -222,18 +265,26 @@ sub draw_list
 {
 	ref(my $self = shift) or croak "instance variable needed";
 	my $curline = shift;
+	my $first_view = shift;
 	my $maxx = $self->{curs}->getmaxx();
 	my $maxy = $self->{curs}->getmaxy();
 
 	my $folder = $self->{_current_folder};
 	my $msgs_per_page = $maxy - 3;
 	my $num_of_msgs = $self->{_current_folder}->messages;
+
+	# don't display warning prompts if we just opened the message
 	if ($curline >= $num_of_msgs)
 	{
 		$curline = $num_of_msgs - 1;
-	} elsif ($curline <= 0) {
+		$self->statusmsg("[No more messages.  Press TAB for next folder.]") unless $first_view;
+	} elsif ($curline < 0) {
 		$curline = 0;
+		$self->statusmsg("[Already on first message]") unless $first_view;
+	} else {
+			$self->clearprompt()
 	}
+
 	my $page;
 	FINDPAGE: for (my $i = 1; $i < (($num_of_msgs / $msgs_per_page) + 1); $i++)
 	{
@@ -249,7 +300,8 @@ sub draw_list
 	for (my $i = 0; $i < $msgs_per_page; $i++)
 	{
 		my $marker = ($curline == ($i+$beginline)) ? "->" : "  ";
-		unless ($folder->message($i+$beginline))
+		my $message;
+		unless ($message = $folder->message($i+$beginline))
 		{
 			addstr($b,$i,0,(" " x $maxx));
 			next;
@@ -259,7 +311,7 @@ sub draw_list
 		addstr($b,sprintf('%-*s',3,$status));
 		# msg number
 		addstr($b,sprintf('%*s',(length($num_of_msgs)),$i + $beginline)." ");
-		my $date = $folder->message($i+$beginline)->date;
+		my $date = $message->date;
 		my ($mon,$day);
 		if ($date =~ /^[A-Za-z]+,\s(\d+)\s+(\S+)/)
 		{
@@ -270,12 +322,12 @@ sub draw_list
 		# day
 		addstr($b,sprintf('%*s',2,$day)." ");
 		addstr($b, substr(sprintf('%-*s',20,
-			$folder->message($i+$beginline)->get('From')),0,20) . " " );
+			$message->get('From')),0,20) . " " );
 #		addstr( "(".substr(sprintf('%-*s',6,$size),0,6).")" );
 		my $restlength = $maxx - (2+3+length($num_of_msgs)+1+4+3+20);
 		$restlength--;
 		addstr($b, substr(sprintf('%-*s',$restlength,
-			$folder->message($i+$beginline)->subject),0,$restlength) );
+			$message->subject),0,$restlength) );
 	}
 	refresh($b);
 	return $curline;
@@ -304,10 +356,12 @@ sub view
 	if ($msgnum > $last_msg)
 	{
 		$msgnum = $last_msg;
-		$self->prompt("[Already on last message]");
+		$self->statusmsg("[Already on last message]");
 	} elsif ($msgnum < 0) {
 		$msgnum = 0;
-		$self->prompt("[Already on first message]");
+		$self->statusmsg("[Already on first message]");
+	} else {
+		$self->clearprompt();
 	}
 
 	my $message = $folder->message($msgnum);
@@ -326,14 +380,14 @@ sub view
 	refresh();
 
 	$self->{_current_view_buffer} = [];
-	push(@{$self->{_current_view_buffer}},"Date: $date");
-	push(@{$self->{_current_view_buffer}},"From: $from");
-	push(@{$self->{_current_view_buffer}},"To: $to");
-	push(@{$self->{_current_view_buffer}},"Cc: $cc");
-	push(@{$self->{_current_view_buffer}},"Subject: $subject");
+	push(@{$self->{_current_view_buffer}},"Date    : $date");
+	push(@{$self->{_current_view_buffer}},"From    : $from");
+	push(@{$self->{_current_view_buffer}},"To      : $to");
+	push(@{$self->{_current_view_buffer}},"Cc      : $cc");
+	push(@{$self->{_current_view_buffer}},"Subject : $subject");
 	push(@{$self->{_current_view_buffer}},"");
 	push(@{$self->{_current_view_buffer}},$message->decoded->lines);
-	my $curline = $self->draw_view(0);
+	my $curline = $self->draw_view(0,1);
 
 	while (my $ch = getch())
 	{
@@ -362,6 +416,8 @@ sub view
 			$self->view_menu($menu);
 		} elsif ( ($ch eq '<') || ($ch eq ',') ) {
 			return $msgnum;
+		} elsif (lc($ch) eq 'c') {
+			return 'compose';
 		}
 		refresh();
 	}
@@ -370,22 +426,26 @@ sub draw_view
 {
 	ref(my $self = shift) or croak "instance variable needed";
 	my $topline = shift;
+	my $first_view = shift;
 	my $lines = @{$self->{_current_view_buffer}};
-	open(TMP,"> /tmp/test$$");
-	foreach my $line (@{$self->{_current_view_buffer}})
-	{
-		print TMP $line . "\n";
-	}
-	close(TMP);
+
 	my $maxx = $self->{curs}->getmaxx();
 	my $maxy = $self->{curs}->getmaxy();
-	if ($topline >= $lines)
+	# don't display warning prompts if we just opened the message
+	unless ($first_view)
 	{
-		$topline = $lines - 1;
-		$self->prompt("[Already at end of message]");
-	} elsif ($topline < 0) {
-		$topline = 0;
-		$self->prompt("[Already at start of message]");
+		if ($topline >= $lines)
+		{
+			$topline = $lines - 1;
+			$self->statusmsg("[Already at end of message]");
+		} elsif ($topline < 0) {
+			$topline = 0;
+			$self->statusmsg("[Already at start of message]");
+		} elsif ($topline == 0) {
+			$self->statusmsg("[Start of message]");
+		} else {
+			$self->clearprompt()
+		}
 	}
 
 	my $b = subwin($maxy - 3, $maxx, 0, 0);
@@ -404,6 +464,183 @@ sub draw_view
 	return $topline;
 }
 
+sub compose_menu
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $menu = shift;
+	my @menu = (
+		[	['^G Get Help','^X Send','^R Rich Hdr','^Y PrvPg/Top','^K Cut Line','^O Postpone'],
+			['^C Cancel','^D Del Char','^J Attach','^V NxtPg/End','^U UnDel Line','^T To AddrBk'] ],
+		[	['^G Get Help','^X Send','^R Rich Hdr','^Y PrvPg/Top','^K Cut Line','^O Postpone'],
+			['^C Cancel','^D Del Char','^J Attach','^V NxtPg/End','^U UnDel Line','^T To Files'] ],
+		[	['^G Get Help','^X Send','^R Rich Hdr','^Y PrvPg/Top','^K Cut Line','^O Postpone'],
+			['^C Cancel','^D Del Char','^J Attach','^V NxtPg/End','^U UnDel Line'] ],
+		[	['^G Get Help','^X Send','^R Rich Hdr','^Y Prev Pg','^K Cut Text','^O Postpone'],
+			['^C Cancel','^D Del Char','^_ Alt Edit','^V Next Pg','^U UnCut Text','^T To Spell'] ],
+		);
+	$self->_draw_menu(\@{$menu[$menu]});
+}
+sub compose
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $msg_ref = shift;
+
+	$msg_ref->{'fields'} = [qw(From To Cc Attchmnt Subject data)];
+	$msg_ref->{'values'} = [];
+	$msg_ref->{'cur_field'} = 0;
+
+	my @field_to_menu = (0,0,0,1,2,3);
+	my $tot_fields = @{$msg_ref->{fields}};
+
+	$self->compose_menu($field_to_menu[$msg_ref->{cur_field}]);
+	while ( my ($rv,$text) = $self->draw_compose($msg_ref) )
+	{
+		if ($rv eq "")
+		{
+			my $rv = &prompt("Cancel message (answering \"Yes\" will abandon your mail message) ?",qr/^[yn]/i);
+			if ($rv =~ /^y/i)
+			{	# return to last screen
+				return 'back';
+			}
+		} elsif ($rv eq "") {
+			return 'send';
+		} elsif ( ($rv eq KEY_UP) ) {
+			$msg_ref->{'values'}[ $msg_ref->{cur_field} ] = $text;
+			if ($msg_ref->{cur_field} <= 0)
+			{
+				$msg_ref->{cur_field} = 0;
+			} else {
+				$msg_ref->{cur_field}--;
+			}
+		} elsif ( ($rv eq KEY_DOWN) || ($rv eq "\n") || ($rv eq "\t") ) {
+			$msg_ref->{'values'}[ $msg_ref->{cur_field} ] = $text;
+			if ($msg_ref->{cur_field} == ($tot_fields - 1))
+			{
+				$msg_ref->{cur_field} = 0;
+			} else {
+				$msg_ref->{cur_field}++;
+			}
+		} else {
+		}
+		$self->compose_menu($field_to_menu[$msg_ref->{cur_field}]);
+	}
+}
+sub draw_compose
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $msg_ref = shift;
+	my $maxx = $self->{curs}->getmaxx();
+	my $maxy = $self->{curs}->getmaxy();
+	my $tot_fields = @{$msg_ref->{fields}};
+	my $b = subwin( ($tot_fields +1), $maxx, 0, 0);
+	my $cur_field = $msg_ref->{cur_field};
+	my ($rv,$content);
+	for (my $i=0; $i<$tot_fields; $i++)
+	{
+		my $draw_only = ($cur_field == $i) ? 0 : 1;
+		# skip drawing the window that get's the focus
+		next unless $draw_only;
+		if ($msg_ref->{fields}[$i] eq 'data')
+		{
+			standout($b);
+			addstr($b,$i,0,"----- Message Text -----");
+			standend($b);
+			($rv,$content) = txt_field(
+				'window'	=> $self->{curs},
+				'xpos'  	=> 0,
+				'ypos'  	=> ($i + 2),
+				'lines' 	=> ($maxy - $tot_fields - 6),
+				'cols'  	=> $maxx,
+				'edit'  	=> 0,
+				'draw_only'	=> 1,
+				'content'	=> $msg_ref->{'values'}[$i],
+				'cursor_disable'	=> 1,
+				'decorations'	=> 0
+				);
+		} else {
+			addstr($b,$i,0, sprintf('%-8s',$msg_ref->{fields}[$i] ).':');
+			addstr($b, " ".$msg_ref->{'values'}[$i].
+				(" "x($maxx - length($msg_ref->{'values'}[$i]) - 10)) );
+		}
+	}
+
+	if ($msg_ref->{fields}[$cur_field] eq 'data')
+	{
+		standout($b);
+		addstr($b,$cur_field,0,"----- Message Text -----");
+		standend($b);
+		refresh($b);
+		($rv,$content) = txt_field(
+			'window'	=> $self->{curs},
+			'xpos'  	=> 0,
+			'ypos'  	=> ($cur_field + 2),
+			'lines' 	=> ($maxy - $tot_fields - 5),
+			'cols'  	=> $maxx,
+#			'edit'  	=> $edit,
+			'content'	=> $msg_ref->{'values'}[$cur_field],
+			'cursor_disable'	=> 1,
+			'regex' 	=> "\t",
+			'decorations'	=> 0
+			);
+	} else {
+		addstr($b,$cur_field,0, sprintf('%-8s',$msg_ref->{fields}[$cur_field] ).':');
+		refresh($b);
+		($rv,$content) = txt_field(
+			'window'	=> $self->{curs},
+			'xpos'  	=> 10,
+			'ypos'  	=> $cur_field,
+			'lines' 	=> 1,
+			'cols'  	=> $maxx - 13,
+			'hz_scroll'	=> 1,
+#			'edit'  	=> $edit,
+			'content'	=> $msg_ref->{'values'}[$cur_field],
+			'cursor_disable'	=> 1,
+			'regex' 	=> "\t\n",
+			'decorations'	=> 0
+			);
+	}
+
+
+	refresh();
+
+	return ($rv,$content);
+}
+
+sub clearprompt
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $maxx = $self->{curs}->getmaxx();
+	my $maxy = $self->{curs}->getmaxy();
+	my $b = subwin(1, $maxx, $maxy - 3, 0);
+	addstr($b,0,0,(" " x $maxx) );
+	refresh($b);
+}
+
+sub statusmsg
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $text = shift;
+	my $maxx = $self->{curs}->getmaxx();
+	my $maxy = $self->{curs}->getmaxy();
+	my $b = subwin(1, $maxx, $maxy - 3, 0);
+
+	my ($str,$found);
+	until($found)
+	{
+		my $leftpad = int(($maxx - length($text)) / 2);
+		my $rightpad = $leftpad + (($maxx - length($text)) % 2);
+		addstr($b,0,0, (" " x $leftpad));
+		standout($b);
+		addstr($b,$text);
+		standend($b);
+		addstr($b," " x $rightpad);
+		print "\b";
+		delwin($b);
+		refresh($b);
+		return undef;
+	}
+}
+
 sub prompt
 {
 	ref(my $self = shift) or croak "instance variable needed";
@@ -411,40 +648,39 @@ sub prompt
 	my $maxx = $self->{curs}->getmaxx();
 	my $maxy = $self->{curs}->getmaxy();
 	my $b = subwin(1, $maxx, $maxy - 3, 0);
-	standout($b);
 
-	my ($str,$found);
-	until($found)
-	{
-		addstr($b,0,0,$text . (" " x ($maxx - length($text))) );
-		move($b,0, length($text)+1);
-		echo();
-		refresh($b);
-		unless ($regex)
-		{   # just prompt, then return
-			noecho();
-			sleep 2;
-			print "\b";
-			standend($b); delwin($b);
-			return undef;
-		}
-		my $str;
-		getstr($b,$str);
+	standout($b);
+	addstr($b,0,0,$text);
+	standend($b);
+	addstr($b, (" " x ($maxx - length($text))) );
+	# put cursor at the right possition
+	move($b,0, (length($text) +1) );
+	echo();
+	refresh($b);
+
+	unless ($regex)
+	{   # just prompt, then return
 		noecho();
-		if ($str eq "^[")
-		{   # hit escape
-			standend($b); delwin($b);
-			return undef;
-		} elsif ($str =~ /$regex/) {
-			standend($b); delwin($b);
-			return $str;
-		} else {
-			print "\b";
-			addstr($b,0,0, " " x $maxx);
-			addstr($b,0,0, "INVALID ENTRY");
-			refresh($b);
-			sleep 2;
-		}
+		print "\b";
+		delwin($b);
+		refresh($b);
+		return undef;
+	}
+	my $str;
+	getnstr($b,$str,10);
+	noecho();
+	if ($str eq "")
+	{   # hit escape
+		delwin($b);
+		return undef;
+	} elsif ($str =~ /$regex/) {
+		delwin($b);
+		return $str;
+	} else {
+		beep();
+		delwin($b);
+		$self->clearprompt();
+		$self->statusmsg("INVALID ENTRY.");
 	}
 }
 

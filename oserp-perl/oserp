@@ -35,8 +35,11 @@ sub main
 		if ($curscreen[0] eq 'main') {
 			$nextscreen = $gui->main();
 		} elsif ($curscreen[0] eq 'compose') {
-			my $msg;
-			$nextscreen = $gui->compose(\$msg);
+			my %msg;
+			 &docompose($gui,\%msg);
+#			$nextscreen = 'back';
+			shift @curscreen;
+			$nextscreen = shift @curscreen;
 		} elsif ($curscreen[0] eq 'back') {
 			shift @curscreen; shift @curscreen;
 			$nextscreen = shift @curscreen;
@@ -61,17 +64,49 @@ sub main
 	}
 }
 
+sub docompose
+{
+	my ($gui,$msg_ref) = @_;
+	my $rv = $gui->compose($msg_ref);
+	if ($rv eq 'back')
+	{	# they canceled. Save the message to dead.letter
+		$gui->statusmsg("Message saved to dead.letter");
+	} else {
+		my %msg;
+		for (my $i=0; $i< @{$msg_ref->{fields}}; $i++)
+		{
+			$msg{$msg_ref->{fields}[$i]} = $msg_ref->{'values'}[$i];
+		}
+		my $message = Mail::Message->build( %msg);
+		if ($message->send())
+		{
+			$gui->statusmsg("[Message sent and copied to \"sent-mail\".]");
+		} else {
+			$gui->statusmsg("[Message send failed!]");
+		}
+	}
+}
+
 sub dolist
 {
 	$cur_fldr = './inbox' unless $cur_fldr;
 	my $mgr = Mail::Box::Manager->new;
-	my $folder = $mgr->open(folder => $cur_fldr);
+	my $folder = $mgr->open(
+		folder => $cur_fldr,
+		keep_dups	=> 1,
+		extrace	=> 'LAZY',
+		);
 	unless ($folder)
 	{
 		$gui->error("Couldn't open folder[$cur_fldr] : $@");
 		return 'back';
 	}
 	my $rv = $gui->list($folder);
+	until($rv ne "checkmail")
+	{
+#		&check_
+		$rv = $gui->list($folder);
+	}
 	$mgr->close($folder);
 	return $rv;
 }
