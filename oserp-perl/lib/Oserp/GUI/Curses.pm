@@ -12,7 +12,7 @@ use Curses::Widgets qw(:all);
 use POSIX qw(:termios_h);
 use vars qw($VERSION);
 
-$VERSION = sprintf "%d.%03d", q$Revision: 1.8 $ =~ /(\d+)/g;
+$VERSION = sprintf "%d.%03d", q$Revision: 1.9 $ =~ /(\d+)/g;
 
 sub redraw_env
 {
@@ -362,6 +362,16 @@ sub reply
 	}
 }
 
+sub search_menu
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $menu = shift;
+	my @menu = (
+		[	['^G Help','^X Select Matches','^Y First Msg'],
+			['^C Cancel','Ret Accept','^V Last Msg'] ],
+		);
+	$self->_draw_menu(\@{$menu[$menu]});
+}
 sub list_menu
 {
 	ref(my $self = shift) or croak "instance variable needed";
@@ -389,69 +399,136 @@ sub list
 
 	my $last_msg = (scalar $folder->messages) - 1;
 	my $curline = $self->draw_list($last_msg,1);
+	my $cursearch;
+	my @searchlist;
 
 	while (my $ch = getch())
 	{
-		if ((lc($ch) eq 'n') || ($ch eq KEY_DOWN)) {
+		if ((lc($ch) eq 'n') || ($ch eq KEY_DOWN)) { # NEXT
 			$curline++;
 			$curline = $self->draw_list($curline);
-		} elsif ((lc($ch) eq 'p') || ($ch eq KEY_UP)) {
+		} elsif ((lc($ch) eq 'p') || ($ch eq KEY_UP)) { # PREV
 			$curline--;
 			$curline = $self->draw_list($curline);
-		} elsif ( ($ch eq " ") || ($ch eq KEY_NPAGE) ) {
+		} elsif ( ($ch eq " ") || ($ch eq KEY_NPAGE) ) { # N_PAGE
 			$curline += ($self->{curs}->getmaxy() - 3);
 			$curline = $self->draw_list($curline);
-		} elsif ( ($ch eq "-") || ($ch eq KEY_PPAGE) ) {
+		} elsif ( ($ch eq "-") || ($ch eq KEY_PPAGE) ) { # P_PAGE
 			$curline -= ($self->{curs}->getmaxy() - 3);
 			$curline = $self->draw_list($curline);
-		} elsif (lc($ch) eq 'q') {
+		} elsif (lc($ch) eq 'q') { # QUIT
 			return 'quit';
-		} elsif (lc($ch) eq 'o') {
+		} elsif (lc($ch) eq 'o') { # OTHER MENU
 			$menu = ($menu >= $max_menu) ? 0 : ($menu + 1);
 			$self->list_menu($menu);
-		} elsif (lc($ch) eq 'j') {
+		} elsif (lc($ch) eq 'j') { # JUMP
 			my $rv = $self->prompt_str("Message number to jump to : ",qr/^\d+$/,10);
 			$curline = $rv if defined $rv;
 			$curline = $self->draw_list($curline);
-		} elsif ( ($ch eq '<') || ($ch eq ',') ) {
+		} elsif ( ($ch eq '<') || ($ch eq ',') ) { # BACK
 			return 'back';
-		} elsif ( ($ch eq "\n") || (lc($ch) eq 'v') || ($ch eq '.') ) {
+		} elsif ( ($ch eq "\n") || (lc($ch) eq 'v') || ($ch eq '.') ) { # VIEW
 			my $nextline = $self->view($curline);
 			if ($nextline eq 'compose')
-			{
+			{	# COMPOSE
 				my $statusmsg = $self->composemsg();
 				$self->list_menu($menu);
 				$curline = $self->draw_list($curline);
 				$self->statusmsg($statusmsg);
 			}
 			$curline = $self->draw_list($nextline);
-		} elsif (lc($ch) eq 'c') {
+		} elsif (lc($ch) eq 'c') { # COMPOSE
 			my $statusmsg = $self->composemsg();
 			$self->clear_win();
 			$self->list_menu($menu);
 			$curline = $self->draw_list($curline);
 			$self->statusmsg($statusmsg);
-		} elsif (lc($ch) eq 'r') {
+		} elsif (lc($ch) eq 'r') { # REPLY
 			my $statusmsg = $self->reply($folder->message($curline));
 			$self->clear_win();
 			$self->list_menu($menu);
 			$curline = $self->draw_list($curline);
 			$self->statusmsg($statusmsg);
-		} elsif (lc($ch) eq 'f') {
+		} elsif (lc($ch) eq 'f') { # FORWARD
 			my $statusmsg = $self->forward($folder->message($curline));
 			$self->clear_win();
 			$self->list_menu($menu);
 			$curline = $self->draw_list($curline);
 			$self->statusmsg($statusmsg);
+		} elsif ($ch eq "") { # SEARCH
+			$self->search_menu(0);
+			my $searchstring = $self->prompt_str("Word to search for [$cursearch] : ", qr/^[A-Za-z0-9`~!\@#\$\%^\&\*()\[\]_\-=+\{\}\|\\;:'",\.\<\>\/\?\s]{1,}$/, 127,"");
+			$self->list_menu($menu);
+			if ($searchstring eq "")
+			{	# cancel search
+				$self->statusmsg("[Search cancelled]");
+			} elsif ($searchstring =~ //) {	# BEGINING
+				$curline = $self->draw_list(0,1);
+			} elsif ($searchstring =~ //) {	# END
+				$curline = $self->draw_list($last_msg,1);
+			} elsif ($searchstring =~ //) {	# HELP
+				# TODO: the help
+				$self->statusmsg("--help not implemented yet--");
+			} else {	# SEARCH
+				my $tag = 0;
+				if ($searchstring =~ //)	# TAG
+				{
+					$tag = 1;
+					$searchstring =~ s///g;
+				}
+				if ($searchstring)
+				{	# get new search list
+					@searchlist = $self->list_search($searchstring);
+					$cursearch = $searchstring;
+				}
+				if ($tag)
+				{	# tag the list
+					$self->flag_msgs(@searchlist);
+				} else {	# jump to the next message
+					my $found;
+					SEARCHSEARCH: for (my $i=0; $i<@searchlist; $i++)
+					{
+						if ($searchlist[$i] > $curline)
+						{
+							$curline = $searchlist[$i];
+							$found++;
+							last SEARCHSEARCH;
+						}
+					}
+					if (@searchlist && (!$found))
+					{
+						$curline = $searchlist[0];
+						$found++;
+					}
+					$curline = $self->draw_list($curline);
+					$self->statusmsg("[Word found]") if $found;
+					$self->statusmsg("[No match found]") unless $found;
+				}
+			}
 		} elsif ( (time() - $self->{_last_mail_check}) > $self->{_check_mail_delay}) {
-			# TODO need a way to check for new messages.
-			# I don't know how to do it with Mail::Box
-			# return "checkmail";
+			$self->{_last_mail_check} = time();
+			$folder->update();
+			my $new_last_msg = (scalar $folder->messages) - 1;
+			if ($new_last_msg != $last_msg)
+			{
+				beep();
+				#$self->statusmsg("[New mail to you! From Josh Miller as to test]");
+				$curline = $self->draw_list($curline);
+				$self->statusmsg("[New mail to you!]");
+				$last_msg = $new_last_msg;
+			}
 		}
 		refresh();
 	}
 }
+sub list_search
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $searchstring = shift;
 
+	my $folder = $self->{_current_folder};
+
+}
 sub draw_list
 {
 	ref(my $self = shift) or croak "instance variable needed";
@@ -992,8 +1069,9 @@ sub prompt_str
 	ref(my $self = shift) or croak "instance variable needed";
 	# Usage: $self->prompt_str("Text Message: ",
 	#                          $regexmatch,
-	#                          $optionallength );
-	return $self->prompt($_[0],$_[1],'str',$_[2]);
+	#                          $optionallength,
+	#                          $extra_escapechars );
+	return $self->prompt($_[0],$_[1],'str',$_[2],$_[3]);
 }
 sub prompt_chr
 {
@@ -1003,7 +1081,7 @@ sub prompt_chr
 sub prompt
 {
 	ref(my $self = shift) or croak "instance variable needed";
-	my ($text,$regex,$str_or_chr,$c_limit) = @_;
+	my ($text,$regex,$str_or_chr,$c_limit,$extra_escape_char) = @_;
 	my $maxx = $self->{curs}->getmaxx();
 	my $maxy = $self->{curs}->getmaxy();
 	my $b = subwin(1, $maxx, $maxy - 3, 0);
@@ -1046,7 +1124,7 @@ sub prompt
 			cols	=> ($maxx - length($text) -1),
 			hz_scroll	=> 1,
 			cursor_disable	=> 1,
-			regex	=> "\n",
+			regex	=> "\n$extra_escape_char",
 			c_limit	=> $c_limit,
 			decorations	=> 0
 			);
@@ -1055,6 +1133,9 @@ sub prompt
 	if (($rv eq "") || ($str =~ //)) {
 		delwin($b);
 		return "";
+	} elsif (length($extra_escape_char) && ($rv =~ /[$extra_escape_char]/)) {
+		delwin($b);
+		return $rv;
 	} elsif ($str =~ /$regex/) {
 		delwin($b);
 		return $str;
