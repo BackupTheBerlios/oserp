@@ -1,0 +1,9 @@
+oserp - stands for OpenSource Emailer Replaces Pine. A work-alike replacement for pine, with a GPL compatable license.
+
+
+Reason for creating yet another mail client:
+I like pine. I like pine a lot. I don't like the license that pine uses, and pine is missing some features I'd like to see.
+mutt isn't bad, but the features I'd like to see have been suggested and discouraged, people have tried writing hacks for them and failed, and I don't want to be yet another person on that list of people.
+I know perl really well. perl has a lot of mail handling modules and scripts already out there. I don't think it will be very difficult to tie them together to create a full blown client.
+
+
