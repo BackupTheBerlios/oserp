@@ -12,7 +12,7 @@ use Curses::Widgets qw(:all);
 use POSIX qw(:termios_h);
 use vars qw($VERSION);
 
-$VERSION = sprintf "%d.%03d", q$Revision: 1.3 $ =~ /(\d+)/g;
+$VERSION = sprintf "%d.%03d", q$Revision: 1.4 $ =~ /(\d+)/g;
 
 sub redraw_env
 {
@@ -378,12 +378,16 @@ sub view
 	my $message = $folder->message($msgnum);
 	my $date = $message->date;
 	my $from = $message->get('From');
-	my @to = $message->to;
-	my @tos = map { $_->format() } @to;
-	my $to = join(',',@tos);
-	my @cc = $message->cc;
-	my @ccs = map { $_->format() } @cc;
-	my $cc = join(',',@ccs);
+#	my @to = $message->to;
+#	my @tos = map { $_->format() } @to;
+	my @to = split(/\n/,  join(",\n          ",
+	                           map { $_->format() } $message->to
+	              )           );
+#	my @cc = $message->cc;
+#	my @ccs = map { $_->format() } @cc;
+	my @cc = split(/\n/,  join(",\n          ",
+	                           map { $_->format() } $message->cc
+	              )           );
 	my $subject = $message->subject;
 
 	$self->view_menu($menu);
@@ -393,11 +397,39 @@ sub view
 	$self->{_current_view_buffer} = [];
 	push(@{$self->{_current_view_buffer}},"Date    : $date");
 	push(@{$self->{_current_view_buffer}},"From    : $from");
-	push(@{$self->{_current_view_buffer}},"To      : $to");
-	push(@{$self->{_current_view_buffer}},"Cc      : $cc");
+
+#	my $init_toline = "To      : ". shift @tos;
+#	$init_toline .= "," if @tos;
+#	push(@{$self->{_current_view_buffer}},$init_toline);
+#	push(@{$self->{_current_view_buffer}},"          $_") foreach @tos;
+
+#	my $init_ccline = "Cc      : ". shift @ccs;
+#	$init_ccline .= "," if @ccs;
+#	push(@{$self->{_current_view_buffer}},$init_ccline);
+#	push(@{$self->{_current_view_buffer}},"          $_") foreach @ccs;
+
+	push(@{$self->{_current_view_buffer}},"To      : ". shift @to);
+	push(@{$self->{_current_view_buffer}},@to);
+	push(@{$self->{_current_view_buffer}},"Cc      : ". shift @cc);
+	push(@{$self->{_current_view_buffer}},@cc);
+
 	push(@{$self->{_current_view_buffer}},"Subject : $subject");
-	push(@{$self->{_current_view_buffer}},"");
-	push(@{$self->{_current_view_buffer}},$message->decoded->lines);
+	if ($message->isMultipart || $message->isNested)
+	{	# add in the parts listing
+		push(@{$self->{_current_view_buffer}},"Parts/Attachments:");
+		my ($text_parts,$attchlist) = $self->list_attachments($message);
+		push(@{$self->{_current_view_buffer}},@{$attchlist});
+		push(@{$self->{_current_view_buffer}},("-" x 40));
+		push(@{$self->{_current_view_buffer}},"");
+		foreach my $part (@{$text_parts})
+		{
+			push(@{$self->{_current_view_buffer}},$part->decoded->lines);
+			push(@{$self->{_current_view_buffer}},("","","-------- END PART --------",""));
+		}
+	} else {
+		push(@{$self->{_current_view_buffer}},"");
+		push(@{$self->{_current_view_buffer}},$message->decoded->lines);
+	}
 	my $curline = $self->draw_view(0,1);
 
 	while (my $ch = getch())
@@ -432,6 +464,59 @@ sub view
 		}
 		refresh();
 	}
+}
+sub list_attachments
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $message = shift;
+	my $partnum = 0;
+	my @ret_lines;
+	my @text_parts; # part we'll display as the body
+	foreach my $part ($message->parts('RECURSE'))
+	{
+		$partnum++;
+		my ($shown, $size, $type);
+		if ($part->body->mimeType =~ /^text/i)
+		{
+			$shown = "Shown"; $type = "Text";
+			push(@text_parts,$part);
+		} else {
+			$shown = "     "; $type = $part->get('Content-Type');
+		}
+		$size = int($part->body->size / 1024) . " K    ";
+		push(@ret_lines, sprintf('%4s',$partnum)." ".$shown.sprintf('%13s',$size)." ".$type);
+	}
+	return (\@text_parts,\@ret_lines);
+}
+sub list_attachments_old
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $message = shift;
+	my $recurse_count = shift || 1; # avoid infinite loop parts
+	my $partnum = shift || 0;
+	return ("   XXX - Multipart recurse level exceeded") if ($recurse_count > 500);
+	$recurse_count++;
+	my @ret_lines;
+	foreach my $part ($message->parts)
+	{
+		$partnum++;
+		my ($shown, $size, $type);
+		if ($part->body->mimeType =~ /text\/plain/i)
+		{
+			$shown = "Shown"; $type = "Text";
+		} elsif ($part->isMultipart || $message->isNested) {
+			$partnum--;
+			my @newlines = $self->list_attachments($part,$recurse_count,$partnum);
+			$partnum += scalar @newlines;
+			push(@ret_lines,@newlines);
+			next;
+		} else {
+			$shown = "     "; $type = $part->get('Content-Type');
+		}
+		$size = int($part->body->size / 1024) . " K    ";
+		push(@ret_lines, sprintf('%4s',$partnum)." ".$shown.sprintf('%13s',$size)." ".$type);
+	}
+	return @ret_lines;
 }
 sub draw_view
 {

@@ -91,7 +91,7 @@ sub dolist
 		keep_dups	=> 1,
 		extrace	=> 'LAZY',
 		);
-	unless ($folder)
+	unless (defined $folder)
 	{
 		$gui->error("Couldn't open folder[$cur_fldr] : $@");
 		return 'back';
