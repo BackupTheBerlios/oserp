@@ -28,7 +28,7 @@ GUIs:
 	bsd "mail"-ish clone
 	some GTK front end
 Config Storage:
-	Flatfile
+	Flatfile (xml? .pinerc?)
 	SQL
 	???Ldap???
 
@@ -37,12 +37,12 @@ fire up gui.
 promt for config info if config hasn't been created yet.
 display main menu (like in pine).
 folders: list_folders()
-when entering a folder, call check_mail().
+callbacks periodically call check_mail().
 when in check_mail(),
 	prompt for login info if check fails
 	foreach each message recieved, call filter_mail()
 	when done, call got_mail() if we got new mail (for notifications)
-
+...um...etc etc
 
 ---------------------------------
 Modules we'll be using for stuff:
@@ -61,8 +61,10 @@ interesting mail client (elmo)
 	http://elmo.sourceforge.net/index.php?s=download&lang=en
 gnome client using mysql for mail storage (db layout ref):
 	http://freshmeat.net/projects/sqmail/
---------------------
-Modules we WILL use:
+pine clone effort, using GNU MailUtils:
+	http://savannah.gnu.org/projects/hydrant
+---------------------------
+Modules we will likely use:
 Feature rich mailbox module (outlook, mh, mbox, imap, pop3, many more):
 	http://search.cpan.org/~markov/Mail-Box-2.053/
 MailTools (other stuff, like Mail::Field::Date)

@@ -1,9 +1,88 @@
-oserp - stands for OpenSource Emailer Replaces Pine. A work-alike replacement for pine, with a GPL compatable license.
+NAME
+	oserp - stands for OpenSource Emailer Replaces Pine
+	A work-alike replacement for pine, with a GPL compatable license.
+
+THIS VERSION IS A SIMPLE PROOF OF CONCEPT VERSION
+	to get a pine clone out the door that can be distributed under a
+	GPL compliant license.
+
+REASON FOR CREATING YET ANOTHER MAIL CLIENT:
+I like pine. I like pine a lot. I don't like the license that pine uses,
+and pine is missing some features I'd like to see.
+mutt isn't bad, but the features I'd like to see have been suggested and
+discouraged, people have tried writing hacks for them and failed, and I
+don't want to be yet another person on that list of people.
+I know perl really well. perl has a lot of mail handling modules and
+scripts already out there. I don't think it will be very difficult to tie
+them together to create a full blown client.
+
+And, maybe someday, it can be re-written in C, or C++, which would be a good
+way for me to learn C/C++. GNU MailUtils already exists, so the backend
+structure is basically there (though it's also missing some of the features
+I'd like to see, but that can be extended).
+Hydrant (http://savannah.gnu.org/projects/hydrant) was started with similar
+goals to mine, but uses MailUtils, but it's dormant, so I'll probably try to
+contribute to that down the road.
 
 
-Reason for creating yet another mail client:
-I like pine. I like pine a lot. I don't like the license that pine uses, and pine is missing some features I'd like to see.
-mutt isn't bad, but the features I'd like to see have been suggested and discouraged, people have tried writing hacks for them and failed, and I don't want to be yet another person on that list of people.
-I know perl really well. perl has a lot of mail handling modules and scripts already out there. I don't think it will be very difficult to tie them together to create a full blown client.
+USAGE
+	Currently, the mail folder path is hardcoded, and there is no config
+	support yet. So, it reads the file "./inbox". This will change soon.
+	To run it, cd to a directory that has an mbox file named "inbox".
+	Type:
+		perl oserp
+	The rest should be just like pine, except most of the features don't
+	work yet.
 
+
+REQUIRES
+	curses or ncurses (c library)
+	Curses (perl module)
+	Curses::Widgets (perl module)
+	POSIX (perl module - I want to remove the need for this)
+	Mail::Box::Manager (perl module)
+
+	RECOMMENDED
+		MIME::Types (perl module)
+		Mail::Box::Parser::C (perl module - faster file based mail access)
+
+FEATURES
+	Mail::Box currently supports folders of type:
+		Dbx (read only) outlook folders
+		IMAP4 (under development)
+		Maildir
+		Mbox
+		MH
+		POP3 (read/delete only)
+	GUI - currently, only a Curses interface that clones pine.
+		Main index works.
+		Message listing works.
+			Most movement keys works (<,>,KEY_PGUP,KEY_UP,etc)
+			Jump works
+		Message display works (text only right now)
+		Compose works (attachments even work, but no file browser).
+		Send mail works
+		Few, if any, of the editor functions work, and field movements in
+		compose don't all work.
+
+TODO
+	Program structure needs re-done. 
+
+COPYRIGHT
+	Copyright 2004 by Josh I. Miller
+
+	This library is free software; you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation; either version 2 of the License, or
+	(at your option) any later version. (see license.txt).
+
+	This program is distributed in the hope that it will be useful, but
+	WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+	General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with this program; if not, write to the Free Software
+	Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
+	02111-1307, USA
 
