@@ -12,7 +12,7 @@ use Curses::Widgets qw(:all);
 use POSIX qw(:termios_h);
 use vars qw($VERSION);
 
-$VERSION = sprintf "%d.%03d", q$Revision: 1.5 $ =~ /(\d+)/g;
+$VERSION = sprintf "%d.%03d", q$Revision: 1.6 $ =~ /(\d+)/g;
 
 sub redraw_env
 {
@@ -223,7 +223,8 @@ sub reply
 	ref(my $self = shift) or croak "instance variable needed";
 	my $message = shift;
 	$self->yn_menu();
-	my $group_reply = $self->prompt("Reply to all recipients? ",qr/^[yn]/i);
+	my $group_reply = $self->prompt_chr("Reply to all recipients? ",qr/^[yn]/i);
+	$self->clearprompt();
 	return undef if ($group_reply =~ //);	# cancel
 	my $gr = ($group_reply =~ /^y/i) ? 1 : 0;
 	# TODO quote character should come from config, as well as other parts here
@@ -291,7 +292,7 @@ sub list
 			$menu = ($menu >= $max_menu) ? 0 : ($menu + 1);
 			$self->list_menu($menu);
 		} elsif (lc($ch) eq 'j') {
-			my $rv = $self->prompt("Message number to jump to : ",qr/^\d+$/);
+			my $rv = $self->prompt_str("Message number to jump to : ",qr/^\d+$/);
 			$curline = $rv if defined $rv;
 			$curline = $self->draw_list($curline);
 		} elsif ( ($ch eq '<') || ($ch eq ',') ) {
@@ -306,10 +307,10 @@ sub list
 			my $reply = $self->reply($folder->message($curline));
 			if ($reply)
 			{
-				# HERE
+				#HERE
 			} else {	# canceled
 				$self->list_menu($menu);
-				$self->clearprompt();
+				$self->statusmsg("[Message cancelled and copied to \"dead.letter\" file]");
 			}
 		} elsif ( (time() - $self->{_last_mail_check}) > $self->{_check_mail_delay}) {
 			# TODO need a way to check for new messages.
@@ -650,7 +651,8 @@ sub compose
 		if ($rv eq "")
 		{
 			$self->yn_menu();
-			my $rv2 = $self->prompt("Cancel message (answering \"Yes\" will abandon your mail message) ? ",qr/^[yn]/i);
+			my $rv2 = $self->prompt_chr("Cancel message (answering \"Yes\" will abandon your mail message) ? ",qr/^[yn]/i);
+			$self->clearprompt();
 			if ($rv2 =~ /^y/i)
 			{	# return to last screen
 				return 'back';
@@ -816,10 +818,20 @@ sub statusmsg
 	}
 }
 
+sub prompt_str
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	return $self->prompt($_[0],$_[1],'str');
+}
+sub prompt_chr
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	return $self->prompt($_[0],$_[1],'chr');
+}
 sub prompt
 {
 	ref(my $self = shift) or croak "instance variable needed";
-	my ($text,$regex) = @_;
+	my ($text,$regex,$str_or_chr) = @_;
 	my $maxx = $self->{curs}->getmaxx();
 	my $maxy = $self->{curs}->getmaxy();
 	my $b = subwin(1, $maxx, $maxy - 3, 0);
@@ -842,7 +854,18 @@ sub prompt
 		return undef;
 	}
 	my $str;
-	getnstr($b,$str,10);
+	if ($str_or_chr eq 'chr')
+	{	# just grab first character
+		noecho();
+		until($str =~ /$regex/)
+		{
+			beep() unless $str == -1;
+			$str = getch();
+		}
+		addstr($b,0, (length($text) +1), $str );
+	} else { # grab a string up to <CR>
+		getnstr($b,$str,10);
+	}
 	noecho();
 	if ($str eq "")
 	{   # hit escape
