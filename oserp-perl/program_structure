@@ -61,6 +61,26 @@ interesting mail client (elmo)
 	http://elmo.sourceforge.net/index.php?s=download&lang=en
 gnome client using mysql for mail storage (db layout ref):
 	http://freshmeat.net/projects/sqmail/
+--------------------
+Modules we WILL use:
+Feature rich mailbox module (outlook, mh, mbox, imap, pop3, many more):
+	http://search.cpan.org/~markov/Mail-Box-2.053/
+MailTools (other stuff, like Mail::Field::Date)
+	http://search.cpan.org/~markov/MailTools-1.61/
+MIME::Lite - for sending mail (the name is very misleading)
+	http://search.cpan.org/~yves/MIME-Lite-3.01/
+MIME-tools - for parsing MIME messages
+	http://search.cpan.org/~eryq/MIME-tools-5.411a/
+MIME::Types - used by MIME::Lite to auto-determine filetypes
+	http://search.cpan.org/~markov/MIME-Types-1.12/
+File::Spec - cross platform filename handling
+	http://search.cpan.org/~kwilliams/File-Spec-0.87/
+DBIx::PDlib - DBI abstraction
+Curses - standard curses interface
+	http://search.cpan.org/~wps/Curses-1.06/
+Curses_widgets (textfield,listbox,buttonsets,calendar,messagebox,inputbox)
+	http://search.cpan.org/~corliss/curses_widgets_1_2/
+	(see test.pl in distro for all kinds of cool shit it does)
 --------
 Modules:
 Mail storage framework we can borrow ideas from:
@@ -71,6 +91,17 @@ Message quoting (filter sending through this):
 	http://search.cpan.org/~chardin/MailQuoteWrap0.01/
 One possible attachment handling module:
 	http://search.cpan.org/~crenz/Mail-Audit-Attach-0.93/Attach.pm
+Possible folder handling:
+	http://search.cpan.org/~rclamp/Email-Folder-0.8/
+Address sorting (can use to sort address book entries):
+	http://search.cpan.org/~chrisj/Mail-AddressSort-1/
+Antivirus tie in:
+	http://search.cpan.org/~sabeck/Mail-ClamAV-0.06/
+Convert to RFC2822 complient data-time
+	http://search.cpan.org/~hata/Mail-Date-0.09/
+Configuration:
+	http://search.cpan.org/~kane/Config-Auto-0.06/
+	http://search.cpan.org/~sherzodr/Config-Simple-4.55/
 ------------
 Box Parsers:
 mbox -> sql database dump:
