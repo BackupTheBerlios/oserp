@@ -1,0 +1,80 @@
+#!/usr/bin/perl
+
+# ncurses interface to oserp libraries
+
+use strict;
+use lib './lib';
+use Oserp::GUI::Curses;
+use Mail::Box::Manager;
+use vars qw($gui $cur_fldr);
+
+&main;
+
+# catch window cleanup
+END {
+	$gui->quit() if $gui;
+}
+
+sub main
+{
+	# $gui is global, so that END{} can call it
+	$gui = new Oserp::GUI::Curses();
+
+	# get config
+	my %config;
+
+	# if no config, prompt to setup
+
+	# we loop, setting curscreen to whatever screen we're going to
+	# might make this a stack later, so we can press back.
+	my @curscreen = ('main');
+
+	while(1)
+	{
+		my $nextscreen;
+		if ($curscreen[0] eq 'main') {
+			$nextscreen = $gui->main();
+		} elsif ($curscreen[0] eq 'compose') {
+			my $msg;
+			$nextscreen = $gui->compose(\$msg);
+		} elsif ($curscreen[0] eq 'back') {
+			shift @curscreen; shift @curscreen;
+			$nextscreen = shift @curscreen;
+		} elsif ($curscreen[0] eq 'list') {
+			$nextscreen = &dolist($gui);
+		} elsif ($curscreen[0] eq 'threadlist') {
+		} elsif ($curscreen[0] eq 'addressbook') {
+		} elsif ($curscreen[0] eq 'quit') {
+			$gui->quit();
+			exit;
+		} else {
+			$nextscreen = $gui->main();
+		}
+		unshift(@curscreen,$nextscreen);
+		# only keep X number of entries in the stack
+		while (@curscreen > 20)
+		{	# pop off entries into the nothingness
+			pop(@curscreen);
+		}
+		# clear the window so we can redraw from scratch
+		$gui->clear_win();
+	}
+}
+
+sub dolist
+{
+	$cur_fldr = './inbox' unless $cur_fldr;
+	my $mgr = Mail::Box::Manager->new;
+	my $folder = $mgr->open(folder => $cur_fldr);
+	unless ($folder)
+	{
+		$gui->error("Couldn't open folder[$cur_fldr] : $@");
+		return 'back';
+	}
+	my $rv = $gui->list($folder);
+	$mgr->close($folder);
+	return $rv;
+}
+
+# vim syntax stuff
+#:set syntax=perl
