@@ -12,7 +12,7 @@ use Curses::Widgets qw(:all);
 use POSIX qw(:termios_h);
 use vars qw($VERSION);
 
-$VERSION = sprintf "%d.%03d", q$Revision: 1.4 $ =~ /(\d+)/g;
+$VERSION = sprintf "%d.%03d", q$Revision: 1.5 $ =~ /(\d+)/g;
 
 sub redraw_env
 {
@@ -41,12 +41,14 @@ sub new
 	# handle redrawing the window when size changes:
 	$SIG{WINCH} = \&redraw_env;
 	# ignore CTRL-C so we can CTRL-C on a message, to cancel sending and shit
-	my $termio = POSIX::Termios->new;
-	$termio->getattr(fileno(STDIN));
-	my $intrid = $termio->getcc(VINTR);
-	$self->{_saved_term} = $intrid;
-	$termio->setcc(VINTR, '');
-	$termio->setattr(1,TCSANOW);
+	{
+		my $termio = POSIX::Termios->new;
+		$termio->getattr(fileno(STDIN));
+		my $intrid = $termio->getcc(VINTR);
+		$self->{_saved_term} = $intrid;
+		$termio->setcc(VINTR, '');
+		$termio->setattr(fileno(STDIN),TCSANOW);
+	}
 
 	my $curs = new Curses;
 	$self->{curs} = $curs;
@@ -74,20 +76,22 @@ sub clear_win
 
 sub quit
 {	# cleanup anything we have laying around
-	# TODO need to somehow restore VINTR, cause this isn't working
 	ref(my $self = shift);
-	my $termio = POSIX::Termios->new;
-	$termio->getattr(fileno(STDIN));
-	if ( (ref($self)) && $self->{_saved_term} )
-	{	# restore the SIGINT
-		$termio->setcc(VINTR, ord( $self->{_saved_term} ) );
-	} else {	# restore SIGINT to CTRL-C
-		$termio->setcc(VINTR, ord( '' ) );
-	}
-	$termio->setattr(1,TCSANOW);
 	clear();
 	refresh();
 	endwin();
+	# restore CTRL-C
+	{
+		my $termio = POSIX::Termios->new;
+		$termio->getattr(fileno(STDIN));
+		if ( (ref($self)) && $self->{_saved_term} )
+		{	# restore the SIGINT
+			$termio->setcc(VINTR, $self->{_saved_term} );
+		} else {	# restore SIGINT to CTRL-C
+			$termio->setcc(VINTR, ord( '' ) );
+		}
+		$termio->setattr(fileno(STDIN),TCSANOW);
+	}
 }
 
 sub _draw_menu
@@ -204,6 +208,41 @@ sub main
 	}
 }
 
+sub yn_menu
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my @menu = (
+		[	['','Y Yes'],
+			['^C Cancel','N [No]'] ]
+		);
+	$self->_draw_menu(\@{$menu[0]});
+}
+
+sub reply
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $message = shift;
+	$self->yn_menu();
+	my $group_reply = $self->prompt("Reply to all recipients? ",qr/^[yn]/i);
+	return undef if ($group_reply =~ //);	# cancel
+	my $gr = ($group_reply =~ /^y/i) ? 1 : 0;
+	# TODO quote character should come from config, as well as other parts here
+	my $quote_char = "> ";
+	my $sig = "";
+	my $strip_sig = qr/^--\s/; # regex, string, code
+	my $inc_message = 'INLINE'; # 'NO'|'INLINE'|'ATTACH'
+
+	# let Mail::Box create the reply
+	my $reply = $message->reply(
+		group_reply	=> $gr,
+		quote	=> $quote_char,
+		signature	=> $sig,
+		strip_signature	=> $strip_sig,
+		include	=> $inc_message
+		);
+	return $message;
+}
+
 sub list_menu
 {
 	ref(my $self = shift) or croak "instance variable needed";
@@ -263,6 +302,15 @@ sub list
 			$curline = $self->draw_list($nextline);
 		} elsif (lc($ch) eq 'c') {
 			return 'compose';
+		} elsif (lc($ch) eq 'r') {
+			my $reply = $self->reply($folder->message($curline));
+			if ($reply)
+			{
+				# HERE
+			} else {	# canceled
+				$self->list_menu($menu);
+				$self->clearprompt();
+			}
 		} elsif ( (time() - $self->{_last_mail_check}) > $self->{_check_mail_delay}) {
 			# TODO need a way to check for new messages.
 			# I don't know how to do it with Mail::Box
@@ -334,14 +382,35 @@ sub draw_list
 		addstr($b,sprintf('%*s',2,$day)." ");
 		addstr($b, substr(sprintf('%-*s',20,
 			$message->get('From')),0,20) . " " );
-#		addstr( "(".substr(sprintf('%-*s',6,$size),0,6).")" );
-		my $restlength = $maxx - (2+3+length($num_of_msgs)+1+4+3+20);
+		my $size = $self->_bytes_to_readable($message->body->size);
+		addstr($b, substr(sprintf('%*s',8,"(".$size.")"),0,8)." " );
+		my $restlength = $maxx - (2+3+length($num_of_msgs)+1+4+3+20+9);
 		$restlength--;
 		addstr($b, substr(sprintf('%-*s',$restlength,
 			$message->subject),0,$restlength) );
 	}
 	refresh($b);
 	return $curline;
+}
+
+sub _bytes_to_readable
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $bytes = shift;
+	my @extension = ('','K','M','G','T');
+	my $ext_id;
+	while ($bytes > 999) # not doing exact 1024, because we're making a float
+	{
+		$bytes /= 1024;
+		$ext_id++;
+	}
+	if ($ext_id)
+	{	# only float it if it's bigger than a few bytes
+		$bytes = sprintf('%.1f',$bytes);
+	} else {
+		$bytes = int($bytes);
+	}
+	return $bytes.$extension[$ext_id];
 }
 
 sub view_menu
@@ -378,13 +447,9 @@ sub view
 	my $message = $folder->message($msgnum);
 	my $date = $message->date;
 	my $from = $message->get('From');
-#	my @to = $message->to;
-#	my @tos = map { $_->format() } @to;
 	my @to = split(/\n/,  join(",\n          ",
 	                           map { $_->format() } $message->to
 	              )           );
-#	my @cc = $message->cc;
-#	my @ccs = map { $_->format() } @cc;
 	my @cc = split(/\n/,  join(",\n          ",
 	                           map { $_->format() } $message->cc
 	              )           );
@@ -397,16 +462,6 @@ sub view
 	$self->{_current_view_buffer} = [];
 	push(@{$self->{_current_view_buffer}},"Date    : $date");
 	push(@{$self->{_current_view_buffer}},"From    : $from");
-
-#	my $init_toline = "To      : ". shift @tos;
-#	$init_toline .= "," if @tos;
-#	push(@{$self->{_current_view_buffer}},$init_toline);
-#	push(@{$self->{_current_view_buffer}},"          $_") foreach @tos;
-
-#	my $init_ccline = "Cc      : ". shift @ccs;
-#	$init_ccline .= "," if @ccs;
-#	push(@{$self->{_current_view_buffer}},$init_ccline);
-#	push(@{$self->{_current_view_buffer}},"          $_") foreach @ccs;
 
 	push(@{$self->{_current_view_buffer}},"To      : ". shift @to);
 	push(@{$self->{_current_view_buffer}},@to);
@@ -483,7 +538,7 @@ sub list_attachments
 		} else {
 			$shown = "     "; $type = $part->get('Content-Type');
 		}
-		$size = int($part->body->size / 1024) . " K    ";
+		$size = $self->_bytes_to_readable($part->body->size);
 		push(@ret_lines, sprintf('%4s',$partnum)." ".$shown.sprintf('%13s',$size)." ".$type);
 	}
 	return (\@text_parts,\@ret_lines);
@@ -513,7 +568,7 @@ sub list_attachments_old
 		} else {
 			$shown = "     "; $type = $part->get('Content-Type');
 		}
-		$size = int($part->body->size / 1024) . " K    ";
+		$size = $self->_bytes_to_readable($part->body->size);
 		push(@ret_lines, sprintf('%4s',$partnum)." ".$shown.sprintf('%13s',$size)." ".$type);
 	}
 	return @ret_lines;
@@ -594,8 +649,9 @@ sub compose
 		$msg_ref->{'values'}[ $cur_field ] = $text;
 		if ($rv eq "")
 		{
-			my $rv = &prompt("Cancel message (answering \"Yes\" will abandon your mail message) ?",qr/^[yn]/i);
-			if ($rv =~ /^y/i)
+			$self->yn_menu();
+			my $rv2 = $self->prompt("Cancel message (answering \"Yes\" will abandon your mail message) ? ",qr/^[yn]/i);
+			if ($rv2 =~ /^y/i)
 			{	# return to last screen
 				return 'back';
 			}
