@@ -1,0 +1,45 @@
+This is going to attempt to document how I'm planning to implement this beast.
+--------------------------------------------------------------------------------
+
+
+All functions that do non-gui stuff will be stuck into modules.
+The module Mail-MsgStore appears to resemble the structure I'm after, so I'll probably start with that. (http://search.cpan.org/~five/Mail-MsgStore-1.51/MsgStore.pm)
+
+Mail::MsgStore uses it's own backend storage, which helps it to do what it does. It states that can be expanded fairly easily to other implementations. I'd like to do that, because I'd like to see standard mbox and mh folder support, as well as SQL database support (one of the main reasons I'm writing this is for a command line mail client with SQL backend support).
+
+The first frontend, I want to look and behave like pine. The message composition should behave like pine's enable-alternate-editor-implicitly was enabled, executing the editor from the config, $ENV{EDITOR}, or vi if that neither of those exist.
+
+Some design goals:
+Message storage support:
+	mbox fiels
+	mh dirs
+	SQL databases
+Address book:
+	pine book support
+	mutt book support
+	LDAP support
+	SQL support
+Folder support
+	should be able to place a message in multiple (virtual) folders
+Easy selecting of multiple messages, and easy to take actions on all of them.
+Complete separation of GUI code.
+GUIs:
+	pine-ish clone
+	bsd "mail"-ish clone
+	some GTK front end
+Config Storage:
+	Flatfile
+	SQL
+	???Ldap???
+
+Program flow:
+fire up gui.
+promt for config info if config hasn't been created yet.
+display main menu (like in pine).
+folders: list_folders()
+when entering a folder, call check_mail().
+when in check_mail(),
+	prompt for login info if check fails
+	foreach each message recieved, call filter_mail()
+	when done, call got_mail() if we got new mail (for notifications)
+
