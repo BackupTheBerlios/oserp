@@ -13,7 +13,7 @@ use Mail::Box::Search::Grep;
 use POSIX qw(:termios_h);
 use vars qw($VERSION);
 
-$VERSION = sprintf "%d.%03d", q$Revision: 1.12 $ =~ /(\d+)/g;
+$VERSION = sprintf "%d.%03d", q$Revision: 1.13 $ =~ /(\d+)/g;
 
 sub redraw_env
 {
@@ -349,6 +349,7 @@ sub reply
 	{	# reply canceled
 		return "[Reply canceled]";
 	}
+	my $default_prelude = $message->replyPrelude($message->get('From'));
 	my $gr = ($group_reply =~ /^y/i) ? 1 : 0;
 	# TODO quote character should come from config, as well as other parts here
 	my $quote_char = "> ";
@@ -358,6 +359,7 @@ sub reply
 
 	# let Mail::Box create the reply
 	my $reply = $message->reply(
+		prelude	=> $default_prelude,
 		group_reply	=> $gr,
 		quote	=> $quote_char,
 		signature	=> $sig,
