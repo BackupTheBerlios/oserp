@@ -72,12 +72,7 @@ sub docompose
 	{	# they canceled. Save the message to dead.letter
 		$gui->statusmsg("Message saved to dead.letter");
 	} else {
-		my %msg;
-		for (my $i=0; $i< @{$msg_ref->{fields}}; $i++)
-		{
-			$msg{$msg_ref->{fields}[$i]} = $msg_ref->{'values'}[$i];
-		}
-		my $message = Mail::Message->build( %msg);
+		my $message = Mail::Message->build( %{$msg_ref} );
 		if ($message->send())
 		{
 			$gui->statusmsg("[Message sent and copied to \"sent-mail\".]");

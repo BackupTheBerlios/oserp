@@ -12,7 +12,7 @@ use Curses::Widgets qw(:all);
 use POSIX qw(:termios_h);
 use vars qw($VERSION);
 
-$VERSION = sprintf "%d.%03d", q$Revision: 1.2 $ =~ /(\d+)/g;
+$VERSION = sprintf "%d.%03d", q$Revision: 1.3 $ =~ /(\d+)/g;
 
 sub redraw_env
 {
@@ -134,6 +134,16 @@ sub _draw_menu
 	refresh($b);
 }
 
+sub clear_main_win
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $maxx = $self->{curs}->getmaxx();
+	my $maxy = $self->{curs}->getmaxy();
+	my $b = subwin($maxy - 3, $maxx, 0, 0);
+	erase($b);
+	refresh($b);
+}
+
 sub main_menu
 {
 	ref(my $self = shift) or croak "instance variable needed";
@@ -146,6 +156,7 @@ sub main_menu
 sub main
 {
 	ref(my $self = shift) or croak "instance variable needed";
+	$self->clear_main_win();
 	$self->main_menu();
 	my @buttons = (
 		'?     HELP               - Get help using oserp            ',
@@ -487,14 +498,15 @@ sub compose
 
 	$msg_ref->{'fields'} = [qw(From To Cc Attchmnt Subject data)];
 	$msg_ref->{'values'} = [];
-	$msg_ref->{'cur_field'} = 0;
+	my $cur_field = 0;
 
 	my @field_to_menu = (0,0,0,1,2,3);
 	my $tot_fields = @{$msg_ref->{fields}};
 
-	$self->compose_menu($field_to_menu[$msg_ref->{cur_field}]);
-	while ( my ($rv,$text) = $self->draw_compose($msg_ref) )
+	$self->compose_menu($field_to_menu[$cur_field]);
+	while ( my ($rv,$text) = $self->draw_compose($msg_ref,$cur_field) )
 	{
+		$msg_ref->{'values'}[ $cur_field ] = $text;
 		if ($rv eq "")
 		{
 			my $rv = &prompt("Cancel message (answering \"Yes\" will abandon your mail message) ?",qr/^[yn]/i);
@@ -503,37 +515,59 @@ sub compose
 				return 'back';
 			}
 		} elsif ($rv eq "") {
+			$self->build_msg_hash($msg_ref);
 			return 'send';
 		} elsif ( ($rv eq KEY_UP) ) {
-			$msg_ref->{'values'}[ $msg_ref->{cur_field} ] = $text;
-			if ($msg_ref->{cur_field} <= 0)
+			if ($cur_field <= 0)
 			{
-				$msg_ref->{cur_field} = 0;
+				$cur_field = 0;
 			} else {
-				$msg_ref->{cur_field}--;
+				$cur_field--;
 			}
 		} elsif ( ($rv eq KEY_DOWN) || ($rv eq "\n") || ($rv eq "\t") ) {
-			$msg_ref->{'values'}[ $msg_ref->{cur_field} ] = $text;
-			if ($msg_ref->{cur_field} == ($tot_fields - 1))
+			if ($cur_field == ($tot_fields - 1))
 			{
-				$msg_ref->{cur_field} = 0;
+				$cur_field = 0;
 			} else {
-				$msg_ref->{cur_field}++;
+				$cur_field++;
 			}
 		} else {
 		}
-		$self->compose_menu($field_to_menu[$msg_ref->{cur_field}]);
+		$self->compose_menu($field_to_menu[$cur_field]);
 	}
+}
+sub build_msg_hash
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $msg_ref = shift;
+
+	# make the new hash
+	my %msg;
+	for (my $i=0; $i< @{$msg_ref->{fields}}; $i++)
+	{
+		if ($msg_ref->{fields}[$i] eq 'Attchmnt')
+		{	# special handling...
+			push(@{$msg{files}},$_) foreach
+					split /,/, $msg_ref->{'values'}[$i];
+		} else {
+			$msg{$msg_ref->{fields}[$i]} = $msg_ref->{'values'}[$i];
+		}
+	}
+	# delete all old keys
+	delete $msg_ref->{$_} foreach keys %{$msg_ref};
+	# copy stuff in %msg to $msg_ref
+	$msg_ref->{$_} = $msg{$_} foreach keys %msg;
 }
 sub draw_compose
 {
 	ref(my $self = shift) or croak "instance variable needed";
 	my $msg_ref = shift;
+	my $cur_field = shift;
 	my $maxx = $self->{curs}->getmaxx();
 	my $maxy = $self->{curs}->getmaxy();
 	my $tot_fields = @{$msg_ref->{fields}};
+
 	my $b = subwin( ($tot_fields +1), $maxx, 0, 0);
-	my $cur_field = $msg_ref->{cur_field};
 	my ($rv,$content);
 	for (my $i=0; $i<$tot_fields; $i++)
 	{
