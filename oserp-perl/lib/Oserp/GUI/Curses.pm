@@ -13,7 +13,7 @@ use Mail::Box::Search::Grep;
 use POSIX qw(:termios_h);
 use vars qw($VERSION);
 
-$VERSION = sprintf "%d.%03d", q$Revision: 1.15 $ =~ /(\d+)/g;
+$VERSION = sprintf "%d.%03d", q$Revision: 1.16 $ =~ /(\d+)/g;
 
 sub redraw_env
 {
@@ -349,6 +349,7 @@ sub reply
 	{	# reply canceled
 		return "[Reply canceled]";
 	}
+	# TODO: default_prelude only needed in Mail::Box <= 2.053 due to bug
 	my $default_prelude = $message->replyPrelude($message->get('From'));
 	my $gr = ($group_reply =~ /^y/i) ? 1 : 0;
 	# TODO quote character should come from config, as well as other parts here
@@ -482,17 +483,28 @@ sub list
 			if ($deleted_count)
 			{
 				$self->yn_menu();
-				my $rv = $self->prompt_chr("Expunge 1 message from INBOX? ",qr/^[yn]/i);
+				my $rv = $self->prompt_chr("Expunge $deleted_count messages from INBOX? ",qr/^[yn]/i);
 				$self->list_menu($menu);
 				if ($rv =~ /y/i)
 				{	# not canceled
-					# TODO: crashes list, because message pointers get screwed
-					# up. We'll probably need to close an re-open.
-#					my $write_success = $folder->write() ? 1 : 0;
-#					$folder->update();
-#					$last_msg = (scalar $folder->messages) - 1;
-#					my $plural = ($deleted_count > 1) ? "messages" : "message";
-#					$statusmsg = "[$deleted_count $plural expunged from folder \"". $folder->name . "\"]";
+					# TODO: Mail::Box::Parser::C crashes;
+					#  Mail::Box::Parser::Perl has extreme memory problems
+					#  an open/close also has memory issues
+					# release referances:
+#					$self->{_current_folder} = undef;
+#					my $write_success = $folder->write();# ? 1 : 0;
+#					if ($write_success)
+#					{
+#						$folder = undef;
+#						$folder = $write_success;
+#						$self->{_current_folder} = $folder;
+#						$folder->update();
+#						$last_msg = (scalar $folder->messages) - 1;
+#						my $plural = ($deleted_count > 1) ? "messages" : "message";
+#						$statusmsg = "[$deleted_count $plural expunged from folder \"". $folder->name . "\"]";
+#					} else {
+#						$statusmsg = "[Expunge failed, can't write to folder]";
+#					}
 					$statusmsg = "[Expunge is currently disabled - bugfixing]";
 				}
 			} else {
@@ -501,8 +513,12 @@ sub list
 			$curline = $self->draw_list($curline);
 			$self->statusmsg($statusmsg) if $statusmsg;
 		} elsif (lc($ch) eq 'm') { # MAIN
+#			$self->{_current_folder} = $folder;
+#			$folder = undef;
 			return 'main';
 		} elsif (lc($ch) eq 'q') { # QUIT
+#			$self->{_current_folder} = $folder;
+#			$folder = undef;
 			return 'quit';
 		} elsif (lc($ch) eq 'o') { # OTHER MENU
 			$menu = ($menu >= $max_menu) ? 0 : ($menu + 1);
@@ -512,6 +528,8 @@ sub list
 			$curline = $rv if defined $rv;
 			$curline = $self->draw_list($curline);
 		} elsif ( ($ch eq '<') || ($ch eq ',') ) { # BACK
+#			$self->{_current_folder} = $folder;
+#			$folder = undef;
 			return 'back';
 		} elsif ( ($ch eq "\n") || (lc($ch) eq 'v') || ($ch eq '.') ) { # VIEW
 			my $nextline = $self->view($curline);
