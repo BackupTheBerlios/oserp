@@ -13,7 +13,7 @@ use Mail::Box::Search::Grep;
 use POSIX qw(:termios_h);
 use vars qw($VERSION);
 
-$VERSION = sprintf "%d.%03d", q$Revision: 1.10 $ =~ /(\d+)/g;
+$VERSION = sprintf "%d.%03d", q$Revision: 1.11 $ =~ /(\d+)/g;
 
 sub redraw_env
 {
@@ -417,6 +417,10 @@ sub list
 		} elsif ( ($ch eq "-") || ($ch eq KEY_PPAGE) ) { # P_PAGE
 			$curline -= ($self->{curs}->getmaxy() - 3);
 			$curline = $self->draw_list($curline);
+		} elsif (lc($ch) eq 'd') { # DELETE
+			$folder->message($curline)->deleted(1);
+			$curline++;
+			$curline = $self->draw_list($curline);
 		} elsif (lc($ch) eq 'q') { # QUIT
 			return 'quit';
 		} elsif (lc($ch) eq 'o') { # OTHER MENU
@@ -559,7 +563,10 @@ sub list_search
 	my $next_match = $curline;
 	if ($filter && $tag)
 	{
-		$filter->search($folder);
+		foreach my $message ($filter->search($folder))
+		{
+			$message->labelsToStatus();
+		}
 	} else {
 		my $last_msg = (scalar $folder->messages) - 1;
 		$curline = $last_msg if ($curline > $last_msg);
@@ -723,6 +730,9 @@ sub view
 	}
 
 	my $message = $folder->message($msgnum);
+	# update 'seen' flag
+	$message->label('seen' => 1);
+	$message->labelsToStatus();
 	my $date = $message->date;
 	my $from = $message->get('From');
 	my @to = split(/\n/,  join(",\n          ",

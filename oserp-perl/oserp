@@ -70,7 +70,9 @@ sub dolist
 	my $folder = $mgr->open(
 		folder => $cur_fldr,
 		keep_dups	=> 1,
-		extrace	=> 'LAZY',
+		extract	=> 'LAZY',
+		access	=> 'rw',
+		save_on_exit	=> 1,
 		);
 	unless (defined $folder)
 	{
@@ -78,12 +80,7 @@ sub dolist
 		return 'back';
 	}
 	my $rv = $gui->list($folder);
-	until($rv ne "checkmail")
-	{
-#		&check_
-		$rv = $gui->list($folder);
-	}
-	$mgr->close($folder);
+	$folder->close();
 	return $rv;
 }
 
