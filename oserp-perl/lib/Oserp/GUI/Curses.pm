@@ -13,7 +13,7 @@ use Mail::Box::Search::Grep;
 use POSIX qw(:termios_h);
 use vars qw($VERSION);
 
-$VERSION = sprintf "%d.%03d", q$Revision: 1.13 $ =~ /(\d+)/g;
+$VERSION = sprintf "%d.%03d", q$Revision: 1.14 $ =~ /(\d+)/g;
 
 sub redraw_env
 {
@@ -421,6 +421,10 @@ sub list_menu
 			['O OTHER CMDS','> [curfunc]','N NextMsg','Spc Next Page','U Undelete','F Forward'] ],
 		[	['? Help','M Main Menu','C Compose','Tab NextNew','% Print','S Save'],
 			['O OTHER CMDS','Q Quit oserp','G GotoFldr','W WhereIs','T TakeAddr','E Export'] ],
+		[	['? Help','X eXpunge','; Select','$ SortIndex','H HdrMode','* Flag'],
+			['O OTHER CMDS','A Apply','J Jump','B Bounce','| Pipe'] ],
+		[	['? Help',': SelectCur','L ListFldrs'],
+			['O OTHER CMDS','Z ZoomMode','# Role'] ],
 		);
 	$self->_draw_menu(\@{$menu[$menu]});
 }
@@ -458,6 +462,15 @@ sub list
 			$folder->message($curline)->deleted(0);
 			$curline = $self->draw_list($curline +1);
 			$self->statusmsg("[Deletion mark removed, message won't be deleted]");
+		} elsif ($ch eq ':') { # SELECT CURRENT
+			my $statusmsg = $self->select_current($curline);
+			$curline = $self->draw_list($curline +1);
+			$self->statusmsg($statusmsg);
+		} elsif ($ch eq ';') { # SELECT
+			my $statusmsg = $self->list_select($curline);
+			$curline = $self->draw_list($curline);
+			$self->statusmsg($statusmsg);
+			$self->list_menu($menu);
 		} elsif (lc($ch) eq 'd') { # DELETE
 			$folder->message($curline)->deleted(1);
 			my $deleted_msg = $curline;
@@ -587,6 +600,200 @@ sub list
 			}
 		}
 		refresh();
+	}
+}
+sub list_select_menu
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $menu = shift;
+	my %menu = (
+		altercur => 
+		[	['','A unselect All','B Broaden selctn','F Flip selected'],
+			['^C Cancel','C [select Cur]','N Narrow selctn'] ],
+		alteruncur => 
+		[	['','A unselect All','B Broaden selctn','F Flip selected'],
+			['^C Cancel','C [unselect Cur]','N Narrow selctn'] ],
+		criteria => 
+		[	['','A select All','N Number','T Text','Z siZe'],
+			['^C Cancel','C [select Cur]','D Date','S Status'] ],
+		number => 
+		[	['^G Help'],
+			['^C Cancel','Ret Accept'] ],
+		date => 
+		[	['^G Help','','^P Prev Day','^X Cur Msg'],
+			['^C Cancel','Ret Accept','^N Next Day','^W Toggle When'] ],
+		text =>
+		[	['','F From','T To','C Cc','R Recipient','B Body'],
+			['^C Cancel','S [Subject]','A All Text','! Not','P Participant'] ],
+		textaddr => 
+		[	['^G Help','^T Cur To','^R Cur From'],
+			['^C Cancel','Ret Accept','^W Cur Cc'] ],
+		textbody =>
+		[	['^G Help'],
+			['^C Cancel','Ret Accept'] ],
+		status =>
+		[	['','N New','D Deleted','! Not'],
+			['^C Cancel','* [Important]','A Answered'] ],
+		sizelarger =>
+		[	['^G Help','^W Smaller'],
+			['^C Cancel','Ret Accept'] ],
+		sizesmaller =>
+		[	['^G Help','^W Larger'],
+			['^C Cancel','Ret Accept'] ],
+		);
+	$self->_draw_menu($menu{$menu});
+}
+sub list_select
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $curmsg = shift;
+
+	my $folder = $self->{_current_folder};
+	my $have_flagged = $folder->messages('flagged');
+	my $broaden = 1;
+	if ($have_flagged)
+	{
+		if ($folder->message($curmsg)->label('flagged'))
+		{	 # are we optioning for unselecting, or selecting curmsg
+			$self->list_select_menu('alteruncur');
+		} else {
+			$self->list_select_menu('altercur');
+		}
+		my $rv = $self->prompt_chr("ALTER message selection : ", qr/[abfcn]/i);
+		return "[Select command cancelled]" if ($rv =~ //);
+		if (lc($rv) eq 'a') { # SELECT ALL
+			foreach my $msg ($folder->messages('flagged'))
+			{
+				$self->flagmsg($msg,0);
+			}
+			return "[$have_flagged messages UNselected]";
+		} elsif (lc($rv) eq 'c') { # SELECT CURRENT
+			if ($folder->message($curmsg)->label('flagged'))
+			{
+				$self->flagmsg($curmsg,0);
+				return "[Message $curmsg UNselected]";
+			} else {
+				$self->flagmsg($curmsg,1);
+				return "[Message $curmsg selected]";
+			}
+		} elsif (lc($rv) eq 'f') { # FLIP SELECTION
+			foreach my $msg ($folder->messages)
+			{
+				($msg->label('flagged')) ? 
+					$self->flagmsg($msg,0) :
+					$self->flagmsg($msg,1);
+			}
+			return "";
+		} elsif (lc($rv) eq 'b') { # BROADEN
+			$broaden = 1;
+		} elsif (lc($rv) eq 'n') { # NARROW
+			$broaden = 0;
+		} else {
+			return "[Programming error in select()]";
+		}
+	} # END if ($have_flagged)
+
+	my $tot_msgs = $folder->messages();
+	$self->list_select_menu('criteria');
+	my $rv = $self->prompt_chr("SELECT criteria : ", qr/[antzcds]/i);
+	return "[Select command cancelled]" if ($rv =~ //);
+	if (lc($rv) eq 'a') { # ALL
+		foreach my $msg ($folder->messages)
+		{
+			$self->flagmsg($msg,1);
+		}
+		return "[ALL $tot_msgs messages selected]";
+	} elsif (lc($rv) eq 'n') { # NUMBER
+	} elsif (lc($rv) eq 't') { # TEXT
+	} elsif (lc($rv) eq 'z') { # SIZE
+	} elsif (lc($rv) eq 'c') { # CURRENT
+		$self->flagmsg($curmsg,1);
+		return "[Message $curmsg selected]";
+	} elsif (lc($rv) eq 'd') { # DATE
+	} elsif (lc($rv) eq 's') { # STATUS
+		my $rv = "!"; my $bool = 1;
+		$self->list_select_menu('status');
+		until ($rv ne "!")
+		{	# not keep toggling the menu
+			($bool % 2) ?
+				($rv = $self->prompt_chr("Select New, Deleted, Answered, or Important messages ? ",qr/[nd!*a]/)) :
+				($rv = $self->prompt_chr("Select NOT New, NOT Deleted, NOT Answered or NOT Tagged msgs ? ",qr/[nd!*a]/));
+			$bool++;
+		}
+		my $not = ($bool % 2) ? 1 : 0;
+		return "[Select command cancelled]" if ($rv =~ //);
+		my %status_map = (
+			n	=> $not ? 'seen' : '!seen',
+			d	=> $not ? '!deleted' : 'deleted',
+			'*'	=> $not ? '!draft' : 'draft', # important
+			a	=> $not ? '!replied' : 'replied'
+			);
+		return "[Programming error in select()]" unless $status_map{lc($rv)};
+		my $flagged_count;
+		if ($broaden)
+		{
+			foreach my $msg ($folder->messages($status_map{$rv}))
+			{
+				$self->flagmsg($msg,1);
+				$flagged_count++;
+			}
+			my $tot_flagged = $folder->messages('flagged');
+			return "[Select matched $flagged_count messages.  $tot_flagged total messages selected.]";
+		} else {
+			my $unflagged_count;
+			my %status_map = (
+				n	=> 'seen',
+				d	=> 'deleted',
+				'*'	=> 'draft', # important
+				a	=> 'replied'
+				);
+			foreach my $msg ($folder->messages('flagged'))
+			{
+				my $match_label = $msg->label($status_map{$rv});
+				# 'seen' opposite of "NEW" we're looking for
+				if ((lc($rv) eq 'n') && (
+				     ($not && $match_label) ||
+                     ((! $not) && (! $match_label))
+				   )) {
+					$flagged_count++;
+				# normal flag
+				} elsif ((lc($rv) ne 'n') && (
+				     ($not && (! $match_label)) ||
+				     ((! $not) && $match_label)
+				   )) {
+					$flagged_count++;
+				# didn't match, unselect it
+				} else {
+					$self->flagmsg($msg,0);
+					$unflagged_count++;
+				}
+			}
+			return "[Select matched $flagged_count messages.  $unflagged_count messages UNselected.]";
+		}
+	} else {
+		return "[Programming error in select()]";
+	}
+}
+sub select_current
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $curid = shift;
+	my $newflag = $self->{_current_folder}->message($curid)->label('flagged') ? 0 : 1;
+	$self->flagmsg($curid,$newflag);
+	return ($newflag) ? "[Message $curid selected]" :
+	                    "[Message $curid UNselected]";
+}
+sub flagmsg
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my ($id,$bool) = @_;
+	if ($id =~ /^\d+$/)
+	{	# passed in a message id
+		$self->{_current_folder}->message($id)->label('flagged' => $bool);
+		$self->{_current_folder}->message($id)->labelsToStatus();
+	} else { # passed in a message ref
+		$id->label('flagged' => $bool);
+		$id->labelsToStatus();
 	}
 }
 sub list_search
@@ -1262,6 +1469,7 @@ sub prompt
 	my ($rv,$str);
 	if ($str_or_chr eq 'chr')
 	{	# just grab first character
+		$str = -1;
 		until($str =~ /$regex/)
 		{
 			beep() unless $str == -1;
