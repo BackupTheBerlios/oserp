@@ -33,7 +33,6 @@ USAGE
 	The rest should be just like pine, except most of the features don't
 	work yet.
 
-
 REQUIRES
 	curses or ncurses (c library)
 	Curses (perl module)
