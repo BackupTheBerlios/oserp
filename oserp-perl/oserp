@@ -80,7 +80,11 @@ sub dolist
 		return 'back';
 	}
 	my $rv = $gui->list($folder);
-	$folder->close();
+	unless ($folder->close( save_deleted => 1 ))
+	{
+		$gui->statusmsg("Unable to write changes to disk! folder = ". $folder->name);
+		sleep 2;
+	}
 	return $rv;
 }
 

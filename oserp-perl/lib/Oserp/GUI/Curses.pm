@@ -13,7 +13,7 @@ use Mail::Box::Search::Grep;
 use POSIX qw(:termios_h);
 use vars qw($VERSION);
 
-$VERSION = sprintf "%d.%03d", q$Revision: 1.11 $ =~ /(\d+)/g;
+$VERSION = sprintf "%d.%03d", q$Revision: 1.12 $ =~ /(\d+)/g;
 
 sub redraw_env
 {
@@ -242,12 +242,49 @@ sub composemsg
 	}
 }
 
+sub bounce_menu
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $menu = shift;
+	my @menu = (
+		[	['Ret Accept'],
+			['^C Cancel'] ],
+		);
+	$self->_draw_menu(\@{$menu[$menu]});
+}
+sub bounce
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $message = shift;
+	$self->bounce_menu(0);
+	my $bounceto = $self->prompt_str("BOUNCE (redirect) message to : ", qr/^[A-Za-z0-9`~!\@#\$\%^\&\*()\[\]_\-=+\{\}\|\\;:'",\.\<\>\/\?\s]{2,}$/, 127);
+	if ($bounceto =~ //)
+	{	# forward canceled
+		return "[Send canceled]";
+	}
+	$self->clearprompt();
+
+	$self->yn_menu();
+	my $yn = $self->prompt_chr("Send message to \"$bounceto\" ? ",qr/^[yn]/i);
+	if ($yn =~ /y/i)
+	{
+		if (my $bounce = $message->bounce(To => $bounceto)->send)
+		{
+			return "[Message sent]";
+		} else {
+			return "[Message send failed!]";
+		}
+	} else {
+		return "[Send canceled]";
+	}
+}
+
 sub forward_menu
 {
 	ref(my $self = shift) or croak "instance variable needed";
 	my $menu = shift;
 	my @menu = (
-		[	['<CR> [accept]'],
+		[	['Ret Accept'],
 			['^C Cancel'] ],
 		);
 	$self->_draw_menu(\@{$menu[$menu]});
@@ -406,21 +443,50 @@ sub list
 	while (my $ch = getch())
 	{
 		if ((lc($ch) eq 'n') || ($ch eq KEY_DOWN)) { # NEXT
-			$curline++;
-			$curline = $self->draw_list($curline);
+			$curline = $self->draw_list($curline +1);
 		} elsif ((lc($ch) eq 'p') || ($ch eq KEY_UP)) { # PREV
-			$curline--;
-			$curline = $self->draw_list($curline);
+			$curline = $self->draw_list($curline -1);
 		} elsif ( ($ch eq " ") || ($ch eq KEY_NPAGE) ) { # N_PAGE
 			$curline += ($self->{curs}->getmaxy() - 3);
 			$curline = $self->draw_list($curline);
 		} elsif ( ($ch eq "-") || ($ch eq KEY_PPAGE) ) { # P_PAGE
 			$curline -= ($self->{curs}->getmaxy() - 3);
 			$curline = $self->draw_list($curline);
+		} elsif (lc($ch) eq 'u') { # UNDELETE
+			$folder->message($curline)->deleted(0);
+			$curline = $self->draw_list($curline +1);
+			$self->statusmsg("[Deletion mark removed, message won't be deleted]");
 		} elsif (lc($ch) eq 'd') { # DELETE
 			$folder->message($curline)->deleted(1);
-			$curline++;
+			my $deleted_msg = $curline;
+			$curline = $self->draw_list($curline +1);
+			$self->statusmsg("[Message $deleted_msg marked for deletion.]");
+		} elsif (lc($ch) eq 'x') { # EXPUNGE
+			my $deleted_count = $folder->messages('DELETED');
+			my $statusmsg;
+			if ($deleted_count)
+			{
+				$self->yn_menu();
+				my $rv = $self->prompt_chr("Expunge 1 message from INBOX? ",qr/^[yn]/i);
+				$self->list_menu($menu);
+				if ($rv =~ /y/i)
+				{	# not canceled
+					# TODO: crashes list, because message pointers get screwed
+					# up. We'll probably need to close an re-open.
+#					my $write_success = $folder->write() ? 1 : 0;
+#					$folder->update();
+#					$last_msg = (scalar $folder->messages) - 1;
+#					my $plural = ($deleted_count > 1) ? "messages" : "message";
+#					$statusmsg = "[$deleted_count $plural expunged from folder \"". $folder->name . "\"]";
+					$statusmsg = "[Expunge is currently disabled - bugfixing]";
+				}
+			} else {
+				$statusmsg = "[No messages marked deleted.  No messages expunged.]";
+			}
 			$curline = $self->draw_list($curline);
+			$self->statusmsg($statusmsg) if $statusmsg;
+		} elsif (lc($ch) eq 'm') { # MAIN
+			return 'main';
 		} elsif (lc($ch) eq 'q') { # QUIT
 			return 'quit';
 		} elsif (lc($ch) eq 'o') { # OTHER MENU
@@ -450,6 +516,12 @@ sub list
 			$self->statusmsg($statusmsg);
 		} elsif (lc($ch) eq 'r') { # REPLY
 			my $statusmsg = $self->reply($folder->message($curline));
+			$self->clear_win();
+			$self->list_menu($menu);
+			$curline = $self->draw_list($curline);
+			$self->statusmsg($statusmsg);
+		} elsif (lc($ch) eq 'b') { # BOUNCE
+			my $statusmsg = $self->bounce($folder->message($curline));
 			$self->clear_win();
 			$self->list_menu($menu);
 			$curline = $self->draw_list($curline);
