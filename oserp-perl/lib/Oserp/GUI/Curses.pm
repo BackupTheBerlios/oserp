@@ -12,7 +12,7 @@ use Curses::Widgets qw(:all);
 use POSIX qw(:termios_h);
 use vars qw($VERSION);
 
-$VERSION = sprintf "%d.%03d", q$Revision: 1.7 $ =~ /(\d+)/g;
+$VERSION = sprintf "%d.%03d", q$Revision: 1.8 $ =~ /(\d+)/g;
 
 sub redraw_env
 {
@@ -241,6 +241,65 @@ sub composemsg
 	}
 }
 
+sub forward_menu
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $menu = shift;
+	my @menu = (
+		[	['<CR> [accept]'],
+			['^C Cancel'] ],
+		);
+	$self->_draw_menu(\@{$menu[$menu]});
+}
+sub forward
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $message = shift;
+	$self->forward_menu(0);
+	my $forwardto = $self->prompt_str("Forward message to: ", qr/^[A-Za-z0-9`~!\@#\$\%^\&\*()\[\]_\-=+\{\}\|\\;:'",\.\<\>\/\?\s]{2,}$/, 127);
+	if ($forwardto =~ //)
+	{	# forward canceled
+		return "[Forward canceled]";
+	}
+	$self->clearprompt();
+
+	my $forward = $message->forward(To => $forwardto);
+	# TODO: body currently handled bad
+
+	my $msg_ref = {};
+	my $rv = $self->compose($msg_ref,$forward);
+	if ($rv eq 'back')
+	{
+		# TODO: actually save it to dead.letter
+		return "[Message cancelled and copied to \"dead.letter\" file]";
+	} else {
+		my $newhead = $forward->head()->clone();
+		my %body_and_files;
+		# TODO: must verify we have nice data, and required fields filled
+		foreach my $key (keys %{$msg_ref})
+		{	# set the headers (all that begin w/ upper case letters)
+			my $value = defined $msg_ref->{$key} ? $msg_ref->{$key} : "";
+			if ($key =~ /^[A-Z]/)
+			{
+				$newhead->set($key, $value);
+			} else {
+				$body_and_files{$key} = $value;
+			}
+		}
+		my $newforward = Mail::Message->build(
+			head	=> $newhead,
+			%body_and_files
+			);
+		if ($newforward->send())
+		{
+			# TODO: save to saved folder
+			return "[Message sent and copied to \"sent-mail\".]";
+		} else {
+			return "[Message send failed!]";
+		}
+	}
+}
+
 sub reply
 {
 	ref(my $self = shift) or croak "instance variable needed";
@@ -248,7 +307,6 @@ sub reply
 	$self->yn_menu();
 	my $group_reply = $self->prompt_chr("Reply to all recipients? ",qr/^[yn]/i);
 	$self->clearprompt();
-	$self->log("past prompt");
 	if ($group_reply =~ //)
 	{	# reply canceled
 		return "[Reply canceled]";
@@ -268,6 +326,7 @@ sub reply
 		strip_signature	=> $strip_sig,
 		include	=> $inc_message
 		);
+	# TODO: body currently handled bad
 
 	my $msg_ref = {};
 	my $rv = $self->compose($msg_ref,$reply);
@@ -278,13 +337,15 @@ sub reply
 	} else {
 		my $newhead = $reply->head()->clone();
 		my %body_and_files;
+		# TODO: must verify we have nice data, and required fields filled
 		foreach my $key (keys %{$msg_ref})
 		{	# set the headers (all that begin w/ upper case letters)
+			my $value = defined $msg_ref->{$key} ? $msg_ref->{$key} : "";
 			if ($key =~ /^[A-Z]/)
 			{
-				$newhead->set($key, $msg_ref->{$key});
+				$newhead->set($key, $value);
 			} else {
-				$body_and_files{$key} = $msg_ref->{$key};
+				$body_and_files{$key} = $value;
 			}
 		}
 		my $newreply = Mail::Message->build(
@@ -349,7 +410,7 @@ sub list
 			$menu = ($menu >= $max_menu) ? 0 : ($menu + 1);
 			$self->list_menu($menu);
 		} elsif (lc($ch) eq 'j') {
-			my $rv = $self->prompt_str("Message number to jump to : ",qr/^\d+$/);
+			my $rv = $self->prompt_str("Message number to jump to : ",qr/^\d+$/,10);
 			$curline = $rv if defined $rv;
 			$curline = $self->draw_list($curline);
 		} elsif ( ($ch eq '<') || ($ch eq ',') ) {
@@ -372,6 +433,12 @@ sub list
 			$self->statusmsg($statusmsg);
 		} elsif (lc($ch) eq 'r') {
 			my $statusmsg = $self->reply($folder->message($curline));
+			$self->clear_win();
+			$self->list_menu($menu);
+			$curline = $self->draw_list($curline);
+			$self->statusmsg($statusmsg);
+		} elsif (lc($ch) eq 'f') {
+			my $statusmsg = $self->forward($folder->message($curline));
 			$self->clear_win();
 			$self->list_menu($menu);
 			$curline = $self->draw_list($curline);
@@ -587,6 +654,12 @@ sub view
 			$self->statusmsg($statusmsg);
 		} elsif (lc($ch) eq 'r') {
 			my $statusmsg = $self->reply($message);
+			$self->clear_win();
+			$self->view_menu($menu);
+			$curline = $self->draw_view($curline);
+			$self->statusmsg($statusmsg);
+		} elsif (lc($ch) eq 'f') {
+			my $statusmsg = $self->forward($message);
 			$self->clear_win();
 			$self->view_menu($menu);
 			$curline = $self->draw_view($curline);
@@ -917,7 +990,10 @@ sub statusmsg
 sub prompt_str
 {
 	ref(my $self = shift) or croak "instance variable needed";
-	return $self->prompt($_[0],$_[1],'str');
+	# Usage: $self->prompt_str("Text Message: ",
+	#                          $regexmatch,
+	#                          $optionallength );
+	return $self->prompt($_[0],$_[1],'str',$_[2]);
 }
 sub prompt_chr
 {
@@ -927,10 +1003,15 @@ sub prompt_chr
 sub prompt
 {
 	ref(my $self = shift) or croak "instance variable needed";
-	my ($text,$regex,$str_or_chr) = @_;
+	my ($text,$regex,$str_or_chr,$c_limit) = @_;
 	my $maxx = $self->{curs}->getmaxx();
 	my $maxy = $self->{curs}->getmaxy();
 	my $b = subwin(1, $maxx, $maxy - 3, 0);
+	unless ( ($c_limit =~ /^\d+$/) && ($c_limit > 0) )
+	{
+		$c_limit = 1;
+	}
+	$c_limit = 1 if ($str_or_chr eq 'chr');
 
 	standout($b);
 	addstr($b,0,0,$text);
@@ -938,21 +1019,18 @@ sub prompt
 	addstr($b, (" " x ($maxx - length($text))) );
 	# put cursor at the right possition
 	move($b,0, (length($text) +1) );
-	echo();
 	refresh($b);
 
 	unless ($regex)
 	{   # just prompt, then return
-		noecho();
-		print "\b";
+		beep();
 		delwin($b);
 		refresh($b);
 		return undef;
 	}
-	my $str;
+	my ($rv,$str);
 	if ($str_or_chr eq 'chr')
 	{	# just grab first character
-		noecho();
 		until($str =~ /$regex/)
 		{
 			beep() unless $str == -1;
@@ -960,13 +1038,23 @@ sub prompt
 		}
 		addstr($b,0, (length($text) +1), $str );
 	} else { # grab a string up to <CR>
-		getnstr($b,$str,10);
+		($rv,$str) = txt_field(
+			window	=> $self->{curs},
+			xpos	=> (length($text) +1),
+			ypos	=> ($maxy -3),
+			lines	=> 1,
+			cols	=> ($maxx - length($text) -1),
+			hz_scroll	=> 1,
+			cursor_disable	=> 1,
+			regex	=> "\n",
+			c_limit	=> $c_limit,
+			decorations	=> 0
+			);
 	}
-	noecho();
-	if ($str eq "")
-	{   # hit escape
+	chomp($str);
+	if (($rv eq "") || ($str =~ //)) {
 		delwin($b);
-		return undef;
+		return "";
 	} elsif ($str =~ /$regex/) {
 		delwin($b);
 		return $str;
@@ -975,6 +1063,7 @@ sub prompt
 		delwin($b);
 		$self->clearprompt();
 		$self->statusmsg("INVALID ENTRY.");
+		return undef;
 	}
 }
 
