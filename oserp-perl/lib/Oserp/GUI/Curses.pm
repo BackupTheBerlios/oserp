@@ -12,7 +12,7 @@ use Curses::Widgets qw(:all);
 use POSIX qw(:termios_h);
 use vars qw($VERSION);
 
-$VERSION = sprintf "%d.%03d", q$Revision: 1.6 $ =~ /(\d+)/g;
+$VERSION = sprintf "%d.%03d", q$Revision: 1.7 $ =~ /(\d+)/g;
 
 sub redraw_env
 {
@@ -70,7 +70,9 @@ sub new
 
 sub clear_win
 {	# remove past screen contents. (this may not be needed in other guis)
-	endwin();
+	erase();
+	refresh();
+#	endwin();
 	clear();
 }
 
@@ -218,6 +220,27 @@ sub yn_menu
 	$self->_draw_menu(\@{$menu[0]});
 }
 
+sub composemsg
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $msg_ref = {};
+	my $rv = $self->compose($msg_ref);
+	if ($rv eq 'back')
+	{	# they canceled. Save the messge to dead.letter
+		# TODO: actually save it
+		return "[Message cancelled and copied to \"dead.letter\" file]";
+	} else {
+		my $message = Mail::Message->build( %{$msg_ref} );
+		if ($message->send())
+		{
+			# TODO: save to saved folder
+			return "[Message sent and copied to \"sent-mail\".]";
+		} else {
+			return "[Message send failed!]";
+		}
+	}
+}
+
 sub reply
 {
 	ref(my $self = shift) or croak "instance variable needed";
@@ -225,11 +248,15 @@ sub reply
 	$self->yn_menu();
 	my $group_reply = $self->prompt_chr("Reply to all recipients? ",qr/^[yn]/i);
 	$self->clearprompt();
-	return undef if ($group_reply =~ //);	# cancel
+	$self->log("past prompt");
+	if ($group_reply =~ //)
+	{	# reply canceled
+		return "[Reply canceled]";
+	}
 	my $gr = ($group_reply =~ /^y/i) ? 1 : 0;
 	# TODO quote character should come from config, as well as other parts here
 	my $quote_char = "> ";
-	my $sig = "";
+	my $sig = undef; # sig can !!!NOT!!! be an empty string ("").
 	my $strip_sig = qr/^--\s/; # regex, string, code
 	my $inc_message = 'INLINE'; # 'NO'|'INLINE'|'ATTACH'
 
@@ -241,7 +268,37 @@ sub reply
 		strip_signature	=> $strip_sig,
 		include	=> $inc_message
 		);
-	return $message;
+
+	my $msg_ref = {};
+	my $rv = $self->compose($msg_ref,$reply);
+	if ($rv eq 'back')
+	{
+		# TODO: actually save it to dead.letter
+		return "[Message cancelled and copied to \"dead.letter\" file]";
+	} else {
+		my $newhead = $reply->head()->clone();
+		my %body_and_files;
+		foreach my $key (keys %{$msg_ref})
+		{	# set the headers (all that begin w/ upper case letters)
+			if ($key =~ /^[A-Z]/)
+			{
+				$newhead->set($key, $msg_ref->{$key});
+			} else {
+				$body_and_files{$key} = $msg_ref->{$key};
+			}
+		}
+		my $newreply = Mail::Message->build(
+			head	=> $newhead,
+			%body_and_files
+			);
+		if ($newreply->send())
+		{
+			# TODO: save to saved folder
+			return "[Message sent and copied to \"sent-mail\".]";
+		} else {
+			return "[Message send failed!]";
+		}
+	}
 }
 
 sub list_menu
@@ -299,19 +356,26 @@ sub list
 			return 'back';
 		} elsif ( ($ch eq "\n") || (lc($ch) eq 'v') || ($ch eq '.') ) {
 			my $nextline = $self->view($curline);
-			return 'compose' if ($nextline eq 'compose');
+			if ($nextline eq 'compose')
+			{
+				my $statusmsg = $self->composemsg();
+				$self->list_menu($menu);
+				$curline = $self->draw_list($curline);
+				$self->statusmsg($statusmsg);
+			}
 			$curline = $self->draw_list($nextline);
 		} elsif (lc($ch) eq 'c') {
-			return 'compose';
+			my $statusmsg = $self->composemsg();
+			$self->clear_win();
+			$self->list_menu($menu);
+			$curline = $self->draw_list($curline);
+			$self->statusmsg($statusmsg);
 		} elsif (lc($ch) eq 'r') {
-			my $reply = $self->reply($folder->message($curline));
-			if ($reply)
-			{
-				#HERE
-			} else {	# canceled
-				$self->list_menu($menu);
-				$self->statusmsg("[Message cancelled and copied to \"dead.letter\" file]");
-			}
+			my $statusmsg = $self->reply($folder->message($curline));
+			$self->clear_win();
+			$self->list_menu($menu);
+			$curline = $self->draw_list($curline);
+			$self->statusmsg($statusmsg);
 		} elsif ( (time() - $self->{_last_mail_check}) > $self->{_check_mail_delay}) {
 			# TODO need a way to check for new messages.
 			# I don't know how to do it with Mail::Box
@@ -516,7 +580,17 @@ sub view
 		} elsif ( ($ch eq '<') || ($ch eq ',') ) {
 			return $msgnum;
 		} elsif (lc($ch) eq 'c') {
-			return 'compose';
+			my $statusmsg = $self->composemsg();
+			$self->clear_win();
+			$self->view_menu($menu);
+			$curline = $self->draw_view($curline);
+			$self->statusmsg($statusmsg);
+		} elsif (lc($ch) eq 'r') {
+			my $statusmsg = $self->reply($message);
+			$self->clear_win();
+			$self->view_menu($menu);
+			$curline = $self->draw_view($curline);
+			$self->statusmsg($statusmsg);
 		}
 		refresh();
 	}
@@ -636,10 +710,32 @@ sub compose
 {
 	ref(my $self = shift) or croak "instance variable needed";
 	my $msg_ref = shift;
+	my $base_message = shift;
+
+	$self->clear_win();
 
 	$msg_ref->{'fields'} = [qw(From To Cc Attchmnt Subject data)];
 	$msg_ref->{'values'} = [];
 	my $cur_field = 0;
+
+	# setup default values based on the passed in message, if available
+	if (ref $base_message)
+	{
+		for (my $i=0; $i < @{$msg_ref->{'fields'}}; $i++)
+		{
+			my $field = $msg_ref->{'fields'}[$i];
+			if ($field eq 'Attchmnt')
+			{	# handled differently (not sure how to do this)
+			} elsif ($field =~ /^[A-Z]/) {
+				# header field (just getting first header field to match)
+				my $v = $base_message->head()->get($field);
+				$msg_ref->{'values'}[$i] = $v if $v;
+			} elsif ($field eq 'data') {
+				# body
+				$msg_ref->{'values'}[$i] = join '', $base_message->body->lines;
+			}
+		}
+	}
 
 	my @field_to_menu = (0,0,0,1,2,3);
 	my $tot_fields = @{$msg_ref->{fields}};
@@ -880,6 +976,16 @@ sub prompt
 		$self->clearprompt();
 		$self->statusmsg("INVALID ENTRY.");
 	}
+}
+
+sub log
+{	# very simple method to log to file ERR in localdir
+	ref(my $self = shift) or croak "instance variable needed";
+	my $msg = shift;
+	my ($pkg,$file,$line) = caller;
+	open(MYERR,">> ERR") or die "can't open logfile ERR";
+	print MYERR "pkg[$pkg] file[$file] line[$line] $msg\n";
+	close MYERR;
 }
 
 sub error

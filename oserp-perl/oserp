@@ -35,9 +35,8 @@ sub main
 		if ($curscreen[0] eq 'main') {
 			$nextscreen = $gui->main();
 		} elsif ($curscreen[0] eq 'compose') {
-			my %msg;
-			 &docompose($gui,\%msg);
-#			$nextscreen = 'back';
+			my $statusmsg = $gui->composemsg();
+			$gui->statusmsg($statusmsg);
 			shift @curscreen;
 			$nextscreen = shift @curscreen;
 		} elsif ($curscreen[0] eq 'back') {
@@ -61,24 +60,6 @@ sub main
 		}
 		# clear the window so we can redraw from scratch
 		$gui->clear_win();
-	}
-}
-
-sub docompose
-{
-	my ($gui,$msg_ref) = @_;
-	my $rv = $gui->compose($msg_ref);
-	if ($rv eq 'back')
-	{	# they canceled. Save the message to dead.letter
-		$gui->statusmsg("Message saved to dead.letter");
-	} else {
-		my $message = Mail::Message->build( %{$msg_ref} );
-		if ($message->send())
-		{
-			$gui->statusmsg("[Message sent and copied to \"sent-mail\".]");
-		} else {
-			$gui->statusmsg("[Message send failed!]");
-		}
 	}
 }
 
