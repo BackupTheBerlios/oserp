@@ -1,0 +1,287 @@
+=head1 The need/goals for Backend.pm
+
+There are two backends I've considered using while writing this, and one that I want to end up using. In the final release, I hope to use Mail::GNUMailUtils, but it hasn't been written yet (GNU MailUtils C library is an existing and complete product, but there is no perl module for it yet).
+
+The pre-alpha release used Mail::Box as the backend. Mail::Box has a lot of features, and a nice object structure. But, it's slow, it's a memory hog, it has some large memory leaks, and I'm not confortable using it with my personal mail (at least not through a client like this).
+
+The next release (beta) will be using Mail::Cclient, which uses the University of Washington's C-Client C library API (the same backend that pine and several other MUA's use). I'm still iffy on the licensing for the backend library, so I still plan on using GNU MailUtils later on.
+
+That brings us to the point - Oserp must remain flexible enough to throw in a different backend, and keep on chugging. So, even though all these module are meant to abstract the whole mailbox thing anyway, we've got to abstract the abstractions so they all look the same to our front end. Besides, we'll probably want to provide some convieniance functions on top of the normal libraries (create reply, create bounce, create forward, copy message to folder, etc).
+
+
+=head1 Our backend object model
+
+In order to tie into the other backend modules, we're basically going to have to reproduce them. Since we're doing that, we might as well do some data transformation to make the results make more sence to our application. For example, to get a message, it's header/body/parts/etc, all the backends do something along the following lines:
+
+   my $message = $backend->get_message($msg_number,[folder]);
+   my $header = $message->header();
+   my @parts = $message->parts();
+
+However, if we want our frontend to work with these without any changes (or with few changes), we'll need to do a bunch of work to move these objects into new objects. On the plus side, if we do this right, it'll make it a lot easier to avoid memory leaks that could come about due to recursive referances.
+
+=head2 Questions backend needs to answer
+
+List folders in a folder collection (ie mbox://user@server.com/INBOX/[])
+Optionally list the size of each folder, number of messages, number of messages with each status, etc (need to see if this should be done in one step because it is more efficient, or multiple queries).
+
+List message headers in a folder
+
+Check mail : return true if there's new mail.
+
+Expunge (folderurl) : delete messages flagged as deleted from given folder
+
+Get message body for a given messageid.
+
+Send a message (oserp should create the unique message id and stuff)
+
+create a reply (messagenum) : should create proper in-reply-to fields, and wrap plain text parts in an indent using the indent string
+
+create a forward (messagenum)
+
+bounce a message (messagenum, bounce_to_addr)
+
+provide some way to search
+
+provide a way to copy messages to another folder (move can be simulated on the user frontend, and we suggest just setting the delete flag on those you've copied).
+
+manage open folders - we currently only need to keep one open at a time, so we'll just do that for now.
+
+close all open folders: expunge deleted bool, cleanup locks, etc.
+
+flag message ( message_number, flag => bool) : flags: deleted, draft, flagged, replied, seen
+
+flag messages (plural)
+
+=head1 Backend API
+
+This outlines the api, similar to a C header file.
+
+=over 4
+
+=item C<$be_obj = Oserp::Backend-E<gt>new();>
+
+returns a referance to the Oserp::Backend object.
+
+=item C<$folders = $be_obj-E<gt>folders($collection_url, $opts);>
+
+$collection_url should be in the form of boxtype://[[user@]server]/path
+
+$opts is an array ref of extras you want returned. One of:
+
+   size messagecount draftcount deletedcount
+   flaggedcount repliedcount seencount
+
+Local stuff will be handled by our module (mbox/mh/maildir). pop doesn't have sub-folders, so just return what's given (basically). imap needs to be handed off to something to get the folders.
+
+returns an array ref of hash refs:
+
+   $array = [
+      {  folder_id => scalar_int,
+         folder_name => scalar_str,
+         folder_url => scalar_str },
+      {etc} ];
+
+=item C<$messages_hdrs = $be_obj-E<gt>message_headers($folder_url);>
+
+$folder_url should be in the form of boxtype://[[user@]server]/path/file
+
+returns an array ref of hash refs:
+
+   $message_headers = [
+      {  _message_id => scalar_int, # same as array index.
+              # Use to select a message if you've sorted an
+              # array based on one of the field in the hash.
+         _flags => {
+            draft   => bool,
+            flagged => bool,
+            deleted => bool,
+            replied => bool,
+            seen    => bool },
+         message-id => scalar_str,
+         subject => scalar_str,
+         to  => scalar_str,
+         cc  => scalar_str,
+         bcc => scalar_str,
+         from    => scalar_str,
+         _date   => unix_timestamp,
+         [someotherheader]   => scalar_str,
+         [someotherheader]   => scalar_str,
+      },
+      { etc } ];
+
+=item C<$messages_hdr = $be_obj-E<gt>message_header($folder_url, $msgnum);>
+
+$folder_url should be in the form of boxtype://[[user@]server]/path/file
+
+$msgnum is the array index of the message in the folder.
+
+returns a has ref (see also, message_headers()):
+
+   $header = 
+      {  _message_id => scalar_int, # same as msgnum.
+         _flags => {
+            draft   => bool,
+            flagged => bool,
+            deleted => bool,
+            replied => bool,
+            seen    => bool },
+         message-id => scalar_str,
+         subject => scalar_str,
+         to  => scalar_str,
+         cc  => scalar_str,
+         bcc => scalar_str,
+         from    => scalar_str,
+         _date   => unix_timestamp,
+         [someotherheader]   => scalar_str,
+         [someotherheader]   => scalar_str,
+      };
+
+=item C<$body = $be_obj-E<gt>message_body($folder_url, $msgnum);>
+
+$folder_url should be in the form of boxtype://[[user@]server]/path/file
+
+$msgnum is the array index of the message in the folder.
+
+returns a hash structure that attempts to do most of the decoding work for you:
+
+   $body = [
+      {  type => "message/type",
+         # text/plain and text/html auto-decoded to text
+         encoding => $encoding,
+         data => $data },
+      { etc } ];
+
+=item C<$has_new = $be_obj-E<gt>check_mail($folder_url);>
+
+$folder_url should be in the form of boxtype://[[user@]server]/path/file
+
+returns scalar_int:
+
+    1 : there is new mail (downloaded if needed)
+    0 : no new mail
+   -1 : error checking mail
+
+NOTE: If you get new mail, you should refresh any data you have that contains message counts, or data. For example, re-fetch your message_headers.
+
+=item C<$success = $be_obj-E<gt>expunge($folder_url);>
+
+$folder_url should be in the form of boxtype://[[user@]server]/path/file
+
+returns true if it worked, false if it failed (connection error, r/w error, etc)
+
+=item C<$success = $be_obj-E<gt>send($msg_ref);>
+
+$msg_ref should be a hash ref containing two elements, head and body, which are the same structure as those returned by message_header() and message_body().
+
+   $msg_ref = {
+      head => {
+         # _message_id => scalar_int, # (not used/needed)
+         _flags => {
+            draft   => bool,
+            flagged => bool,
+            deleted => bool,
+            replied => bool,
+            seen    => bool },
+         message-id => scalar_str,
+         subject => scalar_str,
+         to  => scalar_str,
+         cc  => scalar_str,
+         bcc => scalar_str,
+         from    => scalar_str,
+         _date   => unix_timestamp,
+         [someotherheader]   => scalar_str,
+         [someotherheader]   => scalar_str,
+      },
+      body = [
+      {  type => "message/type",
+         # text/plain and text/html auto-decoded to text
+         encoding => $encoding,
+         data => $data },
+      { etc } ]
+   };
+
+returns true if it worked, false if it failed (connection error, r/w error, etc)
+
+=item C<$msg_ref = $be_obj-E<gt>create_reply($folder_url, $msgnum, $toall, $indent_char);>
+
+$folder_url should be in the form of boxtype://[[user@]server]/path/file
+
+$msgnum is the array index of the message in the folder.
+
+$toall is bool, whether or not to reply to all.
+
+$indent_char is optional. Defaults to "> ".
+
+This calls message_header() and message_body() on the given message, then does some magic to create a reply in the structure that send() wants. This can then be passed to the frontend's message composer, manipulated, and you can call send() on the results.
+
+A unique "Message-ID" field will be generated, replacing the one in the given message. The To: and From: fields basically swapped. If $toall is true, all members of the message will be placed in the To: and Cc: fields.
+
+Non-text attachments are stripped. If there is no text/plain body part, but there is a text/html part, the html will be stripped, and the plain text used. The text message will then be indented using $indent_char (defaults to "> ").
+
+Returns an Oserp::Backend structured message referance.
+
+=item C<$msg_ref = $be_obj-E<gt>create_forward($folder_url, $msgnum);>
+
+(See create_reply)
+
+This does almost the same thing as create_reply, just forwarding instead.
+
+=item C<$success = $be_obj-E<gt>bounce($folder_url, $msgnum, $toaddr);>
+
+$msgnum can be one number as a scalar, or a list of numbers in an array ref.
+
+Bounces the message unchanged to a new address.
+
+=item C<$success = $be_obj-E<gt>copy($folder_url, $msgnum, $to_folderurl);>
+
+$msgnum can be one number as a scalar, or a list of numbers in an array ref.
+
+Copies the given message to the new folder.
+
+returns true if it worked, false if it failed (connection error, r/w error, etc)
+
+=item C<$success = $be_obj-E<gt>flag($folder_url, $msgnum, %flags);>
+
+$msgnum can be one number as a scalar, or a list of numbers in an array ref.
+
+%flags should be a simple hash containing the flags you want set. eg:
+
+   %flags = ( seen => 1, deleted => 0 );
+
+Flags can be any of:
+    deleted draft flagged replied seen
+
+returns true if it worked, false if it failed (connection error, r/w error, etc)
+
+=item C<$success = $be_obj-E<gt>close($folder_url, save_deleted => bool);>
+
+Closes the specified folder. If save_deleted is false, expunge will be called on the folder first.
+
+returns true if it worked, false if it failed (connection error, r/w error, etc)
+
+=item C<$success = $be_obj-E<gt>closeAll($folder_url, save_deleted => bool);>
+
+Closes all open folders. If save_deleted is false, expunge will be called on the folder first.
+
+returns true if it worked, false if it failed (connection error, r/w error, etc)
+
+=item C<$something = $be_obj-E<gt>search(...);>
+
+Not sure how to structure this yet...
+
+=item C<$success = $be_obj-E<gt>create_folder($folder_url);>
+
+=item C<$success = $be_obj-E<gt>delete_folder($folder_url);>
+
+=item C<$success = $be_obj-E<gt>move_folder($folder_url);>
+
+Things to create/destroy/move folders. C-Client supports these with ease, so I figure we might as well implement them, and worry about having to do this with other backends later.
+
+=item Threading...
+
+Haven't given this any thought yet. :-)
+
+I'm guessing this would return messages in the the same way that message_headers() works, just sorting them first, and throwing some flag in there as to the level of indentation or who the parent is, but I don't know.
+
+=back
+

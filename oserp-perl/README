@@ -39,6 +39,7 @@ REQUIRES
 	Curses::Widgets (perl module)
 	POSIX (perl module - I want to remove the need for this)
 	Mail::Box::Manager (perl module)
+	PAR (Perl Archive) http://search.cpan.org/~autrijus/PAR-0.80/lib/App/Packer/Backend/PAR.pm (this will let us put everything into one file.
 
 	RECOMMENDED
 		MIME::Types (perl module)

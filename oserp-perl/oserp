@@ -3,89 +3,296 @@
 # ncurses interface to oserp libraries
 
 use strict;
-use lib './lib';
-use Oserp::GUI::Curses;
+use Carp;
 use Mail::Box::Manager;
-use vars qw($gui $cur_fldr);
+use lib './lib';
+use Oserp::GUI::Pine;
+use Oserp::Config;
+use Oserp::Backend;
+use vars qw($gui $conf $mbox);
 
 &main;
 
 # catch window cleanup
 END {
-	$gui->quit() if $gui;
+	$gui->quit() if ref $gui;
+	$conf->close() if ref $conf;
+	$mbox->quit(save_deleted => 1) if ref $mbox;
+}
+
+sub new
+{
+	my ($this) = shift;
+	my $class = ref($this) || $this;
+
+	# these are made as globals, so that END can call each of their 
+	# close() or quit() methods
+	$mbox = Oserp::Backend->new();
+	$conf = Oserp::Config->new();
+
+	my $self = {
+		_mbox	=> $mbox,
+		_conf	=> $conf,
+		_gui	=> ''
+		};
+
+	bless($self, $class);
 }
 
 sub main
 {
-	# $gui is global, so that END{} can call it
-	$gui = new Oserp::GUI::Curses();
+	# could just do MAIN->new(), but if this is even save under mod_perl
+	my $oserp = __PACKAGE__->new();
 
-	# get config
-	my %config;
+	# these are made as globals, so that END can call each of their 
+	# close() or quit() methods
+	# We shouldn't get $gui back until the gui exits.
+	$gui = Oserp::GUI::Pine->new($oserp);
+	$oserp->quit();
+}
 
-	# if no config, prompt to setup
+=head1 quit()
 
-	# we loop, setting curscreen to whatever screen we're going to
-	# might make this a stack later, so we can press back.
-	my @curscreen = ('main');
+closes files, and stuff
 
-	while(1)
+=cut
+
+sub quit
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	$self->{_conf}->close() if ref $self->{_conf};
+	$self->{_mbox}->closeAllFolders(save_deleted => 1) if ref $self->{_mbox};
+}
+
+=head1 config_get()
+
+Get's some config info. Takes key, and gets it.
+
+This will probably need a lot of changes as we figure out how we're doing the config.
+
+=cut
+
+sub config_get
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	return $self->{_conf}->get(@_);
+}
+
+=head1 config_set()
+
+Set's some config info. Takes key->value pairs, and sets them.
+
+This will probably need a lot of changes as we figure out how we're doing the config.
+
+=cut
+
+sub config_set
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my %opt = @_;
+	if (%opt)
 	{
-		my $nextscreen;
-		if ($curscreen[0] eq 'main') {
-			$nextscreen = $gui->main();
-		} elsif ($curscreen[0] eq 'compose') {
-			my $statusmsg = $gui->composemsg();
-			$gui->statusmsg($statusmsg);
-			shift @curscreen;
-			$nextscreen = shift @curscreen;
-		} elsif ($curscreen[0] eq 'back') {
-			shift @curscreen; shift @curscreen;
-			$nextscreen = shift @curscreen;
-		} elsif ($curscreen[0] eq 'list') {
-			$nextscreen = &dolist($gui);
-		} elsif ($curscreen[0] eq 'threadlist') {
-		} elsif ($curscreen[0] eq 'addressbook') {
-		} elsif ($curscreen[0] eq 'quit') {
-			$gui->quit();
-			exit;
-		} else {
-			$nextscreen = $gui->main();
-		}
-		unshift(@curscreen,$nextscreen);
-		# only keep X number of entries in the stack
-		while (@curscreen > 20)
-		{	# pop off entries into the nothingness
-			pop(@curscreen);
-		}
-		# clear the window so we can redraw from scratch
-		$gui->clear_win();
+		$self->{_conf}->set(%opt);
 	}
 }
 
-sub dolist
+=head1 folders()
+
+Returns a list of configured folders. Folder collections are expanded and every folder available is listed (this differs slightly from the plan, as the config does allow a way to limit what folders in a directory are listed, but we currently ignore that: TODO).
+
+ Data Structure Returned:
+   $folders = [
+      {
+         'collection_id' => scalar_int,
+         'collection_name' => scalar_str,
+         'collection_description' => scalar_str,
+         'folders' => [
+            {
+               folder_id => scalar_int,
+               folder_name => scalar_str,
+               folder_url => scalar_str
+            },
+            {
+               folder_id => scalar_int,
+               folder_name => scalar_str,
+               folder_url => scalar_str
+            },
+            {
+               folder_id => scalar_int,
+               folder_name => scalar_str,
+               folder_url => scalar_str
+            }
+         ]
+      },
+      {
+         'collection_id' => scalar_int,
+         'collectoin_name' => scalar_str,
+         'collection_description' => scalar_str,
+         'folders' => [
+            {
+               folder_id => scalar_int,
+               folder_name => scalar_str,
+               folder_url => scalar_str
+            }
+         ]
+      },
+   ];
+
+=cut
+
+sub folders
 {
-	$cur_fldr = './inbox' unless $cur_fldr;
-	my $mgr = Mail::Box::Manager->new;
-	my $folder = $mgr->open(
-		folder => $cur_fldr,
-		keep_dups	=> 1,
-		extract	=> 'LAZY',
-		access	=> 'rw',
-		save_on_exit	=> 1,
-		);
-	unless (defined $folder)
+	ref(my $self = shift) or croak "instance variable needed";
+
+	# TODO: subdir listing needs a bit of work, and handling of expansion chars
+
+	my $folder_collections = $self->config_get('folder-collections');
+	my @collections = split /,/, $folder_collections;
+
+	my $incoming_folders = $self->config_get('incoming-folders');
+	my @infolders = split /,/, $incoming_folders;
+
+	my @folders;
+	$folders[0] = {
+		collection_id	=> 0,
+		collection_name	=> 'Incoming-Folders',
+		collection_description	=> 'Incoming Message Folders'
+		};
+	for (my $j=0; $j < @infolders; $j++)
 	{
-		$gui->error("Couldn't open folder[$cur_fldr] : $@");
-		return 'back';
+		$infolders[$j] =~ s/^\s+//;
+		my ($name,$url) = split /\s+/, $infolders[$j], 2;
+		$folders[0]->{folders}[$j]{folder_id} = $j;
+		$folders[0]->{folders}[$j]{folder_name} = $name;
+		$folders[0]->{folders}[$j]{folder_url} = $url;
 	}
-	my $rv = $gui->list($folder);
-	unless ($folder->close( save_deleted => 1 ))
+
+	for (my $i=0; $i < @collections; $i++)
 	{
-		$gui->statusmsg("Unable to write changes to disk! folder = ". $folder->name);
-		sleep 2;
+		my ($name,$description,$type,$server,$local,$sublocal);
+		my @subfolders;
+		if ($collections[$i] =~ /^\s*(\S+)\s+\{([^\{\}]+)\}([^\[]+)\[(.*)\]/)
+		{
+			$name = $1; $server = $2; $local = $3; $sublocal = $4;
+			$type = 'remote';
+		} elsif ($collections[$i] =~ /^\s*(\S+)\s+(\S+)\[.*\]/) {
+			$name = $1; $local = $2;
+			$type = 'local';
+			if ($local =~ /^([a-zA-Z0-9]+):\/*(\/.+)/)
+			{
+				my $f_type = $1;
+				my $f_dir = $2;
+				opendir(FDIR,$f_dir) or carp "can't open directory[$f_dir] from folder collection $collections[$i]\n";
+				my $j = 0;
+				DIR: foreach my $f (sort { $a cmp $b } readdir(FDIR))
+				{
+					next(DIR) if ($f =~ /^\./); # skip dotfiles
+					$subfolders[$j]->{folder_id} = $j;
+					$subfolders[$j]->{folder_name} = $f;
+					if ($local =~ /\/$/)
+					{
+						$subfolders[$j]->{folder_url} = $local.$f;
+					} else {
+						$subfolders[$j]->{folder_url} = $local.'/'.$f;
+					}
+					$j++;
+				}
+				closedir FDIR;
+			} else {
+				carp "unable to parse sub-folder-collection $collections[$i]\n";
+			}
+		} else {
+			carp "unable to parse folder-collection $collections[$i]\n";
+			next;
+		}
+		if ($type eq 'remote')
+		{
+			$description = "Folders on $server in $local";
+		} else {
+			$description = "Local folders in $local";
+		}
+		$folders[$i +1] = {
+			collection_id	=> $i +1,
+			collection_name	=> $name,
+			collection_description	=> $description,
+			folders	=> \@subfolders,
+			};
 	}
-	return $rv;
+	return \@folders;
+}
+
+=head1 message_headers()
+
+Returns array of hashes of message headers for a given folder.
+
+ Format:
+    message_headers = [
+    	{	_message_id	=> scalar_int, # same as array index.
+    		               # Use to select a message if you've sorted an
+    		               # array based on one of the field in the hash.
+    		_flags => {
+    			draft	=> bool,
+    			flagged	=> bool,
+    			deleted	=> bool,
+    			replied	=> bool,
+    			seen	=> bool },
+    		subject	=> scalar_str,
+    		to	=> scalar_str,
+    		cc	=> scalar_str,
+    		bcc	=> scalar_str,
+    		from	=> scalar_str,
+    		_date	=> unix_timestamp,
+    		[someotherheader]	=> scalar_str,
+    		[someotherheader]	=> scalar_str,
+    	},
+    	{	_message_id	=> scalar_int, # same as array index.
+    		               # Use to select a message if you've sorted an
+    		               # array based on one of the field in the hash.
+    		_flags => {
+    			draft	=> bool,
+    			flagged	=> bool,
+    			deleted	=> bool,
+    			replied	=> bool,
+    			seen	=> bool },
+    		message-id	=> scalar_str,
+    		subject	=> scalar_str,
+    		to	=> scalar_str, # csv of to's
+    		tos	=> [scalar_str,scalar_str],
+    		cc	=> scalar_str, # csv of cc's
+    		ccs	=> [scalar_str,scalar_str],
+    		bcc	=> scalar_str, # csv of bcc's
+    		bccs	=> [scalar_str,scalar_str],
+    		from	=> scalar_str, # csv of from's
+    		froms	=> [scalar_str,scalar_str],
+    		_date	=> unix_timestamp,
+    		[someotherheader]	=> scalar_str,
+    		[someotherheader]	=> scalar_str,
+    	},
+    ];
+
+=cut
+
+sub message_headers
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $folder_url = shift;
+	return undef unless $folder_url;
+
+	
+}
+
+sub send_msg
+{
+	ref(my $self = shift) or croak "instance variable needed";
+	my $msg_ref = shift;
+
+	my $message = $self->{_mbox}->build_msg( $msg_ref );
+	if ($message->send_msg())
+	{	# TODO: copy to sent folder
+		return 1;
+	} else {
+		return 0;
+	}
 }
 
 # vim syntax stuff

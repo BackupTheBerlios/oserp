@@ -1,0 +1,10 @@
+Until we get Mail::GNUMailUtils working (https://developer.berlios.de/projects/gnumailutilspm/) we're using Mail::Cclient, because it's the closest thing to it, and it's stable and offers the features we need.
+
+On gentoo, I used this to make it:
+perl Makefile.PL --cclient_dir=/usr/lib --with-shared_cclient --with-cclient-includes=/usr/include/imap/ --with-ssl --with-pam
+
+On freebsd, I used this:
+cd /usr/port/mail/p5-Mail-CClient && make install
+
+
+

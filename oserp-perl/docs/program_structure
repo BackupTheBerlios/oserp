@@ -1,0 +1,126 @@
+This is going to attempt to document how I'm planning to implement this beast.
+--------------------------------------------------------------------------------
+
+
+All functions that do non-gui stuff will be stuck into modules.
+The module Mail-MsgStore appears to resemble the structure I'm after, so I'll probably start with that. (http://search.cpan.org/~five/Mail-MsgStore-1.51/MsgStore.pm)
+
+Mail::MsgStore uses it's own backend storage, which helps it to do what it does. It states that can be expanded fairly easily to other implementations. I'd like to do that, because I'd like to see standard mbox and mh folder support, as well as SQL database support (one of the main reasons I'm writing this is for a command line mail client with SQL backend support).
+
+The first frontend, I want to look and behave like pine. The message composition should behave like pine's enable-alternate-editor-implicitly was enabled, executing the editor from the config, $ENV{EDITOR}, or vi if that neither of those exist.
+
+Some design goals:
+Message storage support:
+	mbox fiels
+	mh dirs
+	SQL databases
+Address book:
+	pine book support
+	mutt book support
+	LDAP support
+	SQL support
+Folder support
+	should be able to place a message in multiple (virtual) folders
+Easy selecting of multiple messages, and easy to take actions on all of them.
+Complete separation of GUI code.
+GUIs:
+	pine-ish clone
+	bsd "mail"-ish clone
+	some GTK front end
+Config Storage:
+	Flatfile (xml? .pinerc?)
+	SQL
+	???Ldap???
+
+Program flow:
+fire up gui.
+promt for config info if config hasn't been created yet.
+display main menu (like in pine).
+folders: list_folders()
+callbacks periodically call check_mail().
+when in check_mail(),
+	prompt for login info if check fails
+	foreach each message recieved, call filter_mail()
+	when done, call got_mail() if we got new mail (for notifications)
+...um...etc etc
+
+---------------------------------
+Modules we'll be using for stuff:
+---------------------------------
+-------------------
+MUA client exampls:
+Perl mail client we can steal stuff from:
+	http://www.swi.com.br/~chaos/cmc/
+clone of bsd's "mail" in perl:
+	http://search.cpan.org/~sdague/ppt-0.12/bin/mail
+gtk-perl mail client:
+	http://harvester.sourceforge.net/
+webmail thing in perl, might have some code we can steal:
+	http://mailbox.univie.ac.at/~le/helpdeskmail/
+interesting mail client (elmo)
+	http://elmo.sourceforge.net/index.php?s=download&lang=en
+gnome client using mysql for mail storage (db layout ref):
+	http://freshmeat.net/projects/sqmail/
+pine clone effort, using GNU MailUtils:
+	http://savannah.gnu.org/projects/hydrant
+---------------------------
+Modules we will likely use:
+Feature rich mailbox module (outlook, mh, mbox, imap, pop3, many more):
+	http://search.cpan.org/~markov/Mail-Box-2.053/
+MailTools (other stuff, like Mail::Field::Date)
+	http://search.cpan.org/~markov/MailTools-1.61/
+MIME::Lite - for sending mail (the name is very misleading)
+	http://search.cpan.org/~yves/MIME-Lite-3.01/
+MIME-tools - for parsing MIME messages
+	http://search.cpan.org/~eryq/MIME-tools-5.411a/
+MIME::Types - used by MIME::Lite to auto-determine filetypes
+	http://search.cpan.org/~markov/MIME-Types-1.12/
+File::Spec - cross platform filename handling
+	http://search.cpan.org/~kwilliams/File-Spec-0.87/
+DBIx::PDlib - DBI abstraction
+Curses - standard curses interface
+	http://search.cpan.org/~wps/Curses-1.06/
+Curses_widgets (textfield,listbox,buttonsets,calendar,messagebox,inputbox)
+	http://search.cpan.org/~corliss/curses_widgets_1_2/
+	(see test.pl in distro for all kinds of cool shit it does)
+HTML stripper - http://search.cpan.org/dist/HTML-Detoxifier/
+	cleans off all html (or any set of given tagsets)
+HTML formatter - http://search.cpan.org/dist/HTML-Format/
+	meant to do formatting from html to [plaintext/ps/rtf]
+	Mail::Box's Mail::Message::Convert::HtmlFormatText uses this
+	http://search.cpan.org/dist/HTML-FormatText-WithLinks/ (extends)
+
+--------
+Modules:
+Mail storage framework we can borrow ideas from:
+	http://search.cpan.org/~five/Mail-MsgStore-1.51/MsgStore.pm
+Threading module: (requires messages in Mail::Internet or Mail::Box::Message)
+	http://search.cpan.org/~rclamp/Mail-Thread-2.41/Thread.pm
+Message quoting (filter sending through this):
+	http://search.cpan.org/~chardin/MailQuoteWrap0.01/
+One possible attachment handling module:
+	http://search.cpan.org/~crenz/Mail-Audit-Attach-0.93/Attach.pm
+Possible folder handling:
+	http://search.cpan.org/~rclamp/Email-Folder-0.8/
+Address sorting (can use to sort address book entries):
+	http://search.cpan.org/~chrisj/Mail-AddressSort-1/
+Antivirus tie in:
+	http://search.cpan.org/~sabeck/Mail-ClamAV-0.06/
+Convert to RFC2822 complient data-time
+	http://search.cpan.org/~hata/Mail-Date-0.09/
+Configuration:
+	http://search.cpan.org/~kane/Config-Auto-0.06/
+	http://search.cpan.org/~sherzodr/Config-Simple-4.55/
+------------
+Box Parsers:
+mbox -> sql database dump:
+	http://freshmeat.net/projects/mailidx/
+mbox parser:
+	http://freshmeat.net/projects/m-m-msgparser/
+mbox -> sql database dump:
+	http://freshmeat.net/projects/mbox2mysql/
+------
+Other:
+Backend all in sql database (sendmail/pop3/imap)
+	http://freshmeat.net/projects/dbmail/
+
