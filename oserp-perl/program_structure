@@ -43,3 +43,44 @@ when in check_mail(),
 	foreach each message recieved, call filter_mail()
 	when done, call got_mail() if we got new mail (for notifications)
 
+
+---------------------------------
+Modules we'll be using for stuff:
+---------------------------------
+-------------------
+MUA client exampls:
+Perl mail client we can steal stuff from:
+	http://www.swi.com.br/~chaos/cmc/
+clone of bsd's "mail" in perl:
+	http://search.cpan.org/~sdague/ppt-0.12/bin/mail
+gtk-perl mail client:
+	http://harvester.sourceforge.net/
+webmail thing in perl, might have some code we can steal:
+	http://mailbox.univie.ac.at/~le/helpdeskmail/
+interesting mail client (elmo)
+	http://elmo.sourceforge.net/index.php?s=download&lang=en
+gnome client using mysql for mail storage (db layout ref):
+	http://freshmeat.net/projects/sqmail/
+--------
+Modules:
+Mail storage framework we can borrow ideas from:
+	http://search.cpan.org/~five/Mail-MsgStore-1.51/MsgStore.pm
+Threading module: (requires messages in Mail::Internet or Mail::Box::Message)
+	http://search.cpan.org/~rclamp/Mail-Thread-2.41/Thread.pm
+Message quoting (filter sending through this):
+	http://search.cpan.org/~chardin/MailQuoteWrap0.01/
+One possible attachment handling module:
+	http://search.cpan.org/~crenz/Mail-Audit-Attach-0.93/Attach.pm
+------------
+Box Parsers:
+mbox -> sql database dump:
+	http://freshmeat.net/projects/mailidx/
+mbox parser:
+	http://freshmeat.net/projects/m-m-msgparser/
+mbox -> sql database dump:
+	http://freshmeat.net/projects/mbox2mysql/
+------
+Other:
+Backend all in sql database (sendmail/pop3/imap)
+	http://freshmeat.net/projects/dbmail/
+
