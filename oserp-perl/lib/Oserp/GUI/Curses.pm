@@ -13,7 +13,7 @@ use Mail::Box::Search::Grep;
 use POSIX qw(:termios_h);
 use vars qw($VERSION);
 
-$VERSION = sprintf "%d.%03d", q$Revision: 1.14 $ =~ /(\d+)/g;
+$VERSION = sprintf "%d.%03d", q$Revision: 1.15 $ =~ /(\d+)/g;
 
 sub redraw_env
 {
@@ -433,7 +433,7 @@ sub list
 	ref(my $self = shift) or croak "instance variable needed";
 	my $folder = shift;
 	my $menu = $_[0] ? $_[0] : 0;
-	my $max_menu = 1;
+	my $max_menu = 3;
 	$self->{_current_folder} = $folder;
 	$self->{_last_mail_check} = time();
 
